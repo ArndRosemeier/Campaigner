@@ -54,13 +54,13 @@ import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureCh
  * never come back.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-  fetchWithHeadersTimeout: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+    fetchWithHeadersTimeout: vi.fn(),
+  }),
+);
 vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
 vi.mock('@/lib/imageIntake', () => ({ intakeImage: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));

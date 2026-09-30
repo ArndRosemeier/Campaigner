@@ -58,10 +58,9 @@ vi.mock('@/lib/toast', () => ({
   toastInfo: vi.fn(),
 }));
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   ...(await importOriginal<object>()),

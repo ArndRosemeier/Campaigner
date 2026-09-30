@@ -2,7 +2,9 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import type * as SettingsRepo from '@/db/settingsRepo';
 
-vi.mock('@/llm/openrouter', () => ({ chat: vi.fn() }));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 vi.mock('@/db/settingsRepo', async (importOriginal) => ({
   ...(await importOriginal<typeof SettingsRepo>()),
   getSettings: vi.fn(),

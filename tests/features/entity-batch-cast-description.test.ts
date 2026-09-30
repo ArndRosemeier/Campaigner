@@ -86,12 +86,12 @@ import { clearDatabase } from '../db/helpers';
  * rather than assumed.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 vi.mock('@/search', () => ({ searchRules: vi.fn() }));
 

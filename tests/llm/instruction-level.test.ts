@@ -30,15 +30,9 @@ import { chat } from '@/llm/openrouter';
  * `tests/architecture/one-level-resolution.test.ts`.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {
-    constructor() {
-      super('No OpenRouter API key configured');
-      this.name = 'MissingApiKeyError';
-    }
-  },
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 const chatMock = vi.mocked(chat);
 

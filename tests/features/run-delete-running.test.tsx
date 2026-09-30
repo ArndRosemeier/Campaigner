@@ -37,11 +37,9 @@ import { clearDatabase } from '../db/helpers';
  * and no timer, load or widened timeout decides it.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/lib/toast', async (importOriginal) => {
   const actual = await importOriginal<typeof toastModule>();

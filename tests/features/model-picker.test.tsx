@@ -11,7 +11,6 @@ import { createCampaign } from '@/db/campaignRepo';
 import { readSettings, saveSettings } from '@/db/settingsRepo';
 import { defaultSettings, type Settings } from '@/domain';
 import { listImageModels, listModels } from '@/llm/openrouter';
-import type * as OpenRouterModule from '@/llm/openrouter';
 import { toastError } from '@/lib/toast';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { clearDatabase } from '../db/helpers';
@@ -24,10 +23,12 @@ import { clearDatabase } from '../db/helpers';
  * real router, on a route with no campaign and on a campaign route.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => {
-  const actual = await importOriginal<typeof OpenRouterModule>();
-  return { ...actual, listModels: vi.fn(), listImageModels: vi.fn() };
-});
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    listModels: vi.fn(),
+    listImageModels: vi.fn(),
+  }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),

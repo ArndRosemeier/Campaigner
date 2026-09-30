@@ -11,7 +11,6 @@ import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
 import { clearDatabase } from '../db/helpers';
 
 import type { Id, Persona } from '@/domain';
-import type * as OpenRouterModule from '@/llm/openrouter';
 
 /**
  * Failure-classification persistence (docs/05 run views): when the engine
@@ -24,10 +23,12 @@ import type * as OpenRouterModule from '@/llm/openrouter';
  * `failureKindOf` reads.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => {
-  const actual = await importOriginal<typeof OpenRouterModule>();
-  return { ...actual, chat: vi.fn(), listModels: vi.fn() };
-});
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);

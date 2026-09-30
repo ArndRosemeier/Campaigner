@@ -103,13 +103,13 @@ const { generateImages } = await import('@/llm/imageGen');
 const { intakeImage } = await import('@/lib/imageIntake');
 const { toastError } = await import('@/lib/toast');
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-  fetchWithHeadersTimeout: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+    fetchWithHeadersTimeout: vi.fn(),
+  }),
+);
 
 vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
 

@@ -20,7 +20,6 @@ import {
   type ModuleDocumentPlan,
 } from '@/domain';
 import type * as FilePickerModule from '@/lib/filePicker';
-import type * as OpenRouterModule from '@/llm/openrouter';
 import type * as PdfExportModule from '@/lib/pdfExport';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
@@ -59,10 +58,9 @@ const openSaveTargetMock = vi.fn();
 const writeMock = vi.fn();
 const generatePdfBlobMock = vi.fn();
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<typeof OpenRouterModule>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/lib/filePicker', async (importOriginal) => ({
   ...(await importOriginal<typeof FilePickerModule>()),

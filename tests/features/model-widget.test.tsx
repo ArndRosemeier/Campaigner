@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readSettings, saveSettings } from '@/db/settingsRepo';
 import { defaultSettings, type Settings } from '@/domain';
 import { listModels } from '@/llm/openrouter';
-import type * as OpenRouterModule from '@/llm/openrouter';
 import { ModelWidget } from '@/features/settings/model-widget';
 import { toastError } from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
@@ -25,10 +24,11 @@ import { clearDatabase } from '../db/helpers';
  * the same loud no-key/failed-fetch states and the same recents gate.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => {
-  const actual = await importOriginal<typeof OpenRouterModule>();
-  return { ...actual, listModels: vi.fn() };
-});
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    listModels: vi.fn(),
+  }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),

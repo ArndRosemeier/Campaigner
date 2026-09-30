@@ -62,13 +62,13 @@ vi.mock('@/lib/toast', async (importOriginal) => {
 
 // The image queue's LLM/image entry points — the panel test drives the queue
 // with real Dexie rows but mocked generation.
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-  fetchWithHeadersTimeout: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+    fetchWithHeadersTimeout: vi.fn(),
+  }),
+);
 vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
 vi.mock('@/lib/imageIntake', () => ({ intakeImage: vi.fn() }));
 

@@ -37,11 +37,9 @@ import { clearDatabase } from '../db/helpers';
  * every rejection that was ALREADY truthful had to come out unmoved.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();

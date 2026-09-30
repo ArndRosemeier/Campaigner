@@ -30,17 +30,12 @@ import type { Id } from '@/domain';
  * invalid-JSON retry, needs_review, auto mode, cancel.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {
-    constructor() {
-      super('No OpenRouter API key configured');
-      this.name = 'MissingApiKeyError';
-    }
-  },
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);

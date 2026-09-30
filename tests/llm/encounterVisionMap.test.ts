@@ -48,11 +48,9 @@ import { seedComplexEncounterTarget } from '../helpers/visionComplexTarget';
 import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();

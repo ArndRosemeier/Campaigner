@@ -56,10 +56,9 @@ vi.mock('@/lib/toast', () => ({
   toastInfo: vi.fn(),
 }));
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 // A module seeded at `status: 'generating'` means "a live forge owns this
 // module", and that is the page-local lease the reconcile guard reads (docs/17

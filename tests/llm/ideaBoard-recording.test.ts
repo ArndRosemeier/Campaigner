@@ -18,7 +18,9 @@ import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
  * only thing mocked.
  */
 
-vi.mock('@/llm/openrouter', () => ({ chat: vi.fn() }));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 const chatMock = vi.mocked(chat);
 

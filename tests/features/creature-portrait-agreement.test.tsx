@@ -59,13 +59,13 @@ vi.mock('@/features/images/use-image-url', () => ({
     imageId === null || imageId === undefined ? null : `url:${imageId}`,
 }));
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-  fetchWithHeadersTimeout: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+    fetchWithHeadersTimeout: vi.fn(),
+  }),
+);
 
 const BOARD_W = 800;
 const BOARD_H = 600;

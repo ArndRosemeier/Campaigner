@@ -36,17 +36,12 @@ import { Toaster } from 'sonner';
  * tests/llm/runEngine.test.ts; this file pins the UI around them.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {
-    constructor() {
-      super('No OpenRouter API key configured');
-      this.name = 'MissingApiKeyError';
-    }
-  },
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 vi.mock('@/llm/imageGen', () => ({
   generateImages: vi.fn(),

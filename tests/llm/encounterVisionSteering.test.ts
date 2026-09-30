@@ -31,11 +31,9 @@ import { regenerateEncounterEverything } from '@/features/campaign/encounterRege
  * own suite; the steering control's rendering lives in editor-surfaces.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();

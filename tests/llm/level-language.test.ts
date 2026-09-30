@@ -19,15 +19,9 @@ import type { Module } from '@/domain';
  * zod-validated call. The mock below exists so the pinned arm can exercise that
  * seam without a network.
  */
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {
-    constructor() {
-      super('No OpenRouter API key configured');
-      this.name = 'MissingApiKeyError';
-    }
-  },
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 const chatMock = vi.mocked((await import('@/llm/openrouter')).chat);
 

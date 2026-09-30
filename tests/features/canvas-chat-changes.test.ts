@@ -46,10 +46,9 @@ const { repopulateMock, regenerateMock, runEntityBatchMock } = vi.hoisted(() => 
   runEntityBatchMock: vi.fn<(input: RunEntityBatchInput) => Promise<EntityBatchResult>>(),
 }));
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),

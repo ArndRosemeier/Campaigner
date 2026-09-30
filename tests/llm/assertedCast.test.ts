@@ -60,12 +60,12 @@ import { generatedImagesFor } from '../helpers/imageRunFixtures';
  * Every pin states its own revert-proof.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();

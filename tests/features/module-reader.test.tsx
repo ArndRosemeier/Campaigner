@@ -42,13 +42,13 @@ vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toas
 
 // The popover's "Generate" runs a real chain → real runEngine; only the LLM
 // entry point is mocked (embeddings stays inert: no rulebooks are seeded).
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-  fetchWithHeadersTimeout: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+    fetchWithHeadersTimeout: vi.fn(),
+  }),
+);
 
 // Only the LLM entry points are mocked; `moduleGenEvents` (the in-memory
 // streaming emitter the reader subscribes to) stays real via the spread.

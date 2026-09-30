@@ -28,10 +28,9 @@ import { clearDatabase } from '../db/helpers';
  * served and is named LOUDLY (toastError), never silently dropped.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),

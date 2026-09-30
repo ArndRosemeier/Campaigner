@@ -52,11 +52,9 @@ import { useProgressStore } from '@/lib/progress';
  * makes the run REFUSE — there is no free-text chain underneath any more.
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();

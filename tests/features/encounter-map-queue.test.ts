@@ -19,11 +19,9 @@ import { toastError } from '@/lib/toast';
 import { chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {},
-  OpenRouterError: class OpenRouterError extends Error {},
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
 // Fill-grade draw (docs/11 D12 amendment): pinned so the brief's

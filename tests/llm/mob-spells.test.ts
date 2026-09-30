@@ -34,17 +34,12 @@ import { clearDatabase } from '../db/helpers';
  * is the ONE helper (`tests/helpers/spellFixtures`, docs/17 row 373).
  */
 
-vi.mock('@/llm/openrouter', () => ({
-  chat: vi.fn(),
-  MissingApiKeyError: class MissingApiKeyError extends Error {
-    constructor() {
-      super('No OpenRouter API key configured');
-      this.name = 'MissingApiKeyError';
-    }
-  },
-  OpenRouterError: class OpenRouterError extends Error {},
-  listModels: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);

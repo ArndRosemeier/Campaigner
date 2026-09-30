@@ -47,10 +47,9 @@ import { clearDatabase } from '../db/helpers';
  * as the one controller.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),

@@ -32,10 +32,9 @@ import { clearDatabase } from '../db/helpers';
  * the extractor and boundary logic run for real.
  */
 
-vi.mock('@/llm/openrouter', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  chat: vi.fn(),
-}));
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
