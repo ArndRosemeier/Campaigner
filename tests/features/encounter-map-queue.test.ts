@@ -17,6 +17,7 @@ import { encounterRunAdapters, runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
 import { toastError } from '@/lib/toast';
 import { chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
+import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 
 vi.mock('@/llm/openrouter', () => ({
   chat: vi.fn(),
@@ -1038,4 +1039,47 @@ describe('module encounter map queue', () => {
     const runs = await listRunsByCampaign(campaignId);
     expect(runs.find((run) => run.targetArtifactId === encounterId)?.status).toBe('completed');
   }, 30000);
+});
+
+/**
+ * THE EXPLICIT REDRAW (docs/17 row 422): the generation dialog's overwrite asks
+ * the queue to redraw an encounter that ALREADY carries its map. The automation
+ * guard (skip-if-mapped) must still hold for every normal job, and a `regen` job
+ * is the one that runs past it — here it reaches the persona check, which this
+ * suite leaves unseeded, so the difference is observable without a model run.
+ */
+describe('the regen job (docs/17 row 422)', () => {
+  it('a normal job skips a mapped encounter; a regen job runs past the guard', async () => {
+    const campaign = await createCampaign({ name: 'Redraw', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Mapped',
+      data: {
+        difficulty: '', levelHint: '', partyLevel: 4,
+        monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
+        terrain: '', tactics: '', treasure: '',
+        mapImageId: '00000000-0000-4000-8000-0000000000aa', layout: adoptionArenaLayout('4:3'),
+        preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
+      },
+    });
+    const job = { campaignId: campaign.id, moduleId: null, artifactId: encounter.id, name: 'Mapped' };
+
+    useEncounterMapQueue.getState().enqueue([job]);
+    await waitFor(() => {
+      const state = useEncounterMapQueue.getState();
+      expect(state.queued.length + state.active.length).toBe(0);
+    });
+    expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    useEncounterMapQueue.getState().enqueueReplacing([{ ...job, regen: true }]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().failed).toHaveLength(1);
+    });
+    const call = toastErrorMock.mock.calls[0];
+    expect(call?.[0]).toBe('Could not generate a map for "Mapped"');
+    expect((call?.[1] as Error).message).toContain('Cartographer persona is missing');
+    expect(await listRunsByCampaign(campaign.id)).toEqual([]);
+  });
 });

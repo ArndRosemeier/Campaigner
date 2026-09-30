@@ -1,6 +1,7 @@
 import type { AnyArtifact, EntityKind, Id, Module } from '@/domain';
 import {
   ARTIFACT_KIND_SINGULAR,
+  castCreatureWritePermitted,
   comparableName,
   ENTITY_KINDS,
   bestiarySlotForEntity,
@@ -258,6 +259,64 @@ export interface GenerationSelectionInput {
   levelRange: GenerationLevelRange;
   /** The encounter extras the run was asked for (see `GenerationEncounterExtras`). */
   encounterExtras: GenerationEncounterExtras;
+  /**
+   * THE OVERWRITE CHECKBOX (docs/17 row 422) — the owner's model-evaluation
+   * control: *"when checked, all selected details that were already there get
+   * removed and generated freshly"*. On, the selection ALSO covers the selected
+   * names whose detail / cover / battlemap / mob portraits already exist, and
+   * reports them in `overwrites` so the dialog can say exactly what will be
+   * replaced. Absent or false is the additive run, and every field this seam
+   * returned before is byte-identical (`overwrites` is then all empty).
+   */
+  overwrite?: boolean;
+}
+
+/** An existing artifact the overwrite run regenerates, and the row it is. */
+export interface GenerationOverwriteTarget extends GenerationTarget {
+  artifactId: Id;
+}
+
+/** A selected, already-detailed name the overwrite deliberately leaves alone. */
+export interface GenerationOverwriteKept {
+  name: string;
+  kind: EntityKind;
+  /** Why, ready to print (the dialog's confirmation names it). */
+  reason: string;
+}
+
+/**
+ * What an overwrite run REPLACES (docs/17 row 422), per kind of work. Every
+ * list is existing work the additive sets exclude, so no job is counted twice.
+ *
+ * - `details`: this module's own detailed rows, regenerated IN PLACE (same id,
+ *   fresh text, the previous text kept as a revision — owner decision 1).
+ * - `images`: rows of a ticked image kind that carry a COVER; the fresh image
+ *   becomes the cover and the old one is removed once it has landed (owner
+ *   decision 2).
+ * - `maps`: this module's encounters that already carry a battlemap (only when
+ *   Battlemaps is ticked); the redraw replaces the map in one transaction.
+ * - `mobPortraits`: this module's encounters with a roster (only when Mob
+ *   portraits is ticked); every creature portrait is regenerated, existing ones
+ *   replaced delete-after-replace and missing ones filled.
+ * - `kept`: detailed names the overwrite does NOT regenerate, with the reason —
+ *   never a silent skip.
+ */
+export interface GenerationOverwrites {
+  details: GenerationOverwriteTarget[];
+  images: GenerationOverwriteTarget[];
+  maps: GenerationEncounterTarget[];
+  mobPortraits: GenerationEncounterTarget[];
+  kept: GenerationOverwriteKept[];
+}
+
+/** The number of overwrite jobs — the dialog's "is anything replaced?". */
+export function overwriteJobCount(overwrites: GenerationOverwrites): number {
+  return (
+    overwrites.details.length +
+    overwrites.images.length +
+    overwrites.maps.length +
+    overwrites.mobPortraits.length
+  );
 }
 
 /**
@@ -300,12 +359,14 @@ export interface GenerationSelection extends LevelNameSelection {
    * never enqueued from the plan: the dispatcher re-reads after the pass.
    */
   pendingEncounters: GenerationTarget[];
+  /** What an overwrite run replaces (all empty unless `overwrite` is on). */
+  overwrites: GenerationOverwrites;
   /**
    * THE SCOPE STATEMENT'S NUMBER: every job the selection would start —
    * details + the images (existing + pending) + the ticked encounters' maps and
-   * mob portraits (existing + pending). The dialog prints THIS field, so what
-   * it announces and what it runs cannot drift; an extra the dialog did not
-   * tick contributes nothing.
+   * mob portraits (existing + pending) + every overwrite job. The dialog prints
+   * THIS field, so what it announces and what it runs cannot drift; an extra
+   * the dialog did not tick contributes nothing.
    */
   totalCount: number;
 }
@@ -392,7 +453,17 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
     });
 
   const maps = withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets);
-  const mobPortraits = withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets);
+  const fillPortraits = withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets);
+
+  const overwrite =
+    input.overwrite === true
+      ? selectOverwrites({ input, artifacts, selectedTargets: names.targets, levelless, maps, withId })
+      : { overwrites: EMPTY_OVERWRITES, needsLevel: [] };
+  const { overwrites } = overwrite;
+  // An encounter whose portraits the overwrite regenerates (both lanes, missing
+  // ones filled too) is not ALSO a fill job: one encounter, one portrait job.
+  const regenPortraitIds = new Set(overwrites.mobPortraits.map((target) => target.artifactId));
+  const mobPortraits = fillPortraits.filter((target) => !regenPortraitIds.has(target.artifactId));
 
   // A detail encounter with no artifact yet (one the run will create). Its
   // battlemap is certain once the row exists; its portrait work is decided by
@@ -411,19 +482,142 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
     images.length +
     pendingImages.length +
     (extras.battlemaps ? maps.length + pendingEncounters.length : 0) +
-    (extras.mobPortraits ? mobPortraits.length + pendingEncounters.length : 0);
+    (extras.mobPortraits ? mobPortraits.length + pendingEncounters.length : 0) +
+    overwriteJobCount(overwrites);
 
   return {
     ...names,
     detail: detailReady,
-    needsLevel,
+    // With overwrite off this is exactly the additive list (nothing appended).
+    needsLevel:
+      overwrite.needsLevel.length === 0
+        ? needsLevel
+        : [...needsLevel, ...overwrite.needsLevel].sort(compareTargets),
     images,
     pendingImages,
     maps,
     mobPortraits,
     pendingEncounters,
+    overwrites,
     totalCount,
   };
+}
+
+const EMPTY_OVERWRITES: GenerationOverwrites = {
+  details: [],
+  images: [],
+  maps: [],
+  mobPortraits: [],
+  kept: [],
+};
+
+/**
+ * The selected names of `kinds` that EXIST, resolved to their rows: the exact
+ * complement of a missing-work detector (`batchTargets` for details,
+ * `imageTargets` for images), so "exists" and "missing" can never disagree.
+ */
+function existingOf(
+  input: GenerationSelectionInput,
+  artifacts: readonly AnyArtifact[],
+  selectedTargets: readonly GenerationTarget[],
+  kinds: readonly EntityKind[],
+  missingOf: (module: Module, artifacts: readonly AnyArtifact[], kind: EntityKind) => string[],
+): { target: GenerationTarget; artifact: AnyArtifact }[] {
+  const { module } = input;
+  const existing: { target: GenerationTarget; artifact: AnyArtifact }[] = [];
+  for (const kind of kinds) {
+    const missing = new Set(missingOf(module, artifacts, kind).map(nameKey));
+    for (const target of selectedTargets) {
+      if (target.kind !== kind || missing.has(nameKey(target.name))) continue;
+      const artifact = resolveWikiLink(target.name, artifacts, { moduleId: module.id }).artifact;
+      if (artifact !== undefined) existing.push({ target, artifact });
+    }
+  }
+  return existing;
+}
+
+/**
+ * The overwrite half of the selection (docs/17 row 422): what already exists
+ * inside the selected scope. Returns the overwrite sets plus the detailed
+ * NPCs/encounters held back for a missing level (they join `needsLevel`).
+ */
+function selectOverwrites(options: {
+  input: GenerationSelectionInput;
+  artifacts: readonly AnyArtifact[];
+  selectedTargets: readonly GenerationTarget[];
+  levelless: (target: GenerationTarget) => boolean;
+  maps: readonly GenerationEncounterTarget[];
+  withId: (detector: readonly { id: Id; name: string }[]) => GenerationEncounterTarget[];
+}): { overwrites: GenerationOverwrites; needsLevel: GenerationTarget[] } {
+  const { input, artifacts, selectedTargets, levelless } = options;
+  const { module } = input;
+
+  const details: GenerationOverwriteTarget[] = [];
+  const kept: GenerationOverwriteKept[] = [];
+  const needsLevel: GenerationTarget[] = [];
+  for (const { target, artifact } of existingOf(input, artifacts, selectedTargets, input.kinds, batchTargets)) {
+    // STRICT LEVELS (docs/17 row 401) hold for a regeneration exactly as for a
+    // creation: a level is stated, never guessed.
+    if (levelless(target)) {
+      needsLevel.push(target);
+      continue;
+    }
+    if (artifact.moduleId !== module.id) {
+      // The in-place refill grounds its brief in the module that OWNS the row;
+      // a row this module only links to is changed where it lives.
+      kept.push({
+        name: target.name,
+        kind: target.kind,
+        reason: 'not this module’s own entity — change it where it lives',
+      });
+      continue;
+    }
+    // THE ONE cast rule (docs/17 row 284): with no instruction, a cast library
+    // creature's row is never rewritten (the batch would refuse it after the run).
+    if (!castCreatureWritePermitted(artifact, undefined)) {
+      kept.push({
+        name: target.name,
+        kind: target.kind,
+        reason: 'a cast library creature — its name and stats are the library’s',
+      });
+      continue;
+    }
+    details.push({ ...target, artifactId: artifact.id });
+  }
+  details.sort(compareTargets);
+
+  const imageKinds = input.kinds.filter((kind) => input.imageKinds.includes(kind));
+  const images: GenerationOverwriteTarget[] = existingOf(
+    input,
+    artifacts,
+    selectedTargets,
+    imageKinds,
+    imageTargets,
+  )
+    // What an image overwrite replaces is the COVER: a gallery-only row (an
+    // encounter whose one image is its battlemap) has no cover to replace.
+    .filter(({ artifact }) => artifact.coverImageId !== null)
+    .map(({ target, artifact }) => ({ ...target, artifactId: artifact.id }))
+    .sort(compareTargets);
+
+  const ownEncounters = artifacts.filter(
+    (artifact): artifact is AnyArtifact & { kind: 'encounter' } =>
+      artifact.kind === 'encounter' && artifact.moduleId === module.id,
+  );
+  const needMap = new Set(options.maps.map((target) => target.artifactId));
+  const maps = input.encounterExtras.battlemaps
+    ? options
+        .withId(ownEncounters)
+        .filter((target) => !needMap.has(target.artifactId))
+        .sort(compareTargets)
+    : [];
+  const mobPortraits = input.encounterExtras.mobPortraits
+    ? options
+        .withId(ownEncounters.filter((encounter) => encounter.data.monsters.length > 0))
+        .sort(compareTargets)
+    : [];
+
+  return { overwrites: { details, images, maps, mobPortraits, kept }, needsLevel };
 }
 
 /** The dialog's human label for a kind (the domain's own singular labels). */

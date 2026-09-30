@@ -1,7 +1,11 @@
 import type { AnyArtifact, Campaign, EntityKind, Module } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
-import { enqueueEncounterPortraitFill } from '@/features/campaign/mob-portrait-queue';
+import {
+  enqueueEncounterPortraitFill,
+  regenerateEncounterPortraits,
+} from '@/features/campaign/mob-portrait-queue';
+import { changeArtifact } from '@/features/modules/change-artifact';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { entityGateNeeds, namesAwaitingGate, openEntityGate } from '@/features/modules/entity-gate';
@@ -18,6 +22,8 @@ import {
   type GenerationEncounterExtras,
   type GenerationKind,
   type GenerationLevelRange,
+  type GenerationEncounterTarget,
+  type GenerationOverwriteTarget,
   type GenerationSelection,
   type GenerationTarget,
 } from '@/features/modules/generation-selection';
@@ -56,12 +62,21 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * missing, so a name whose detail failed must be reported by the batch, never
  * re-reported by the queue.
  *
- * EVERYTHING IS ADDITIVE AND IDEMPOTENT, because the underlying seams already
- * are: a batch targets only names with no authored detail of their own, the
- * image queue skips entities that already carry an image, the map queue skips
- * encounters that already carry a map, and the portrait fill enumerates away
- * kinds that already carry art. Re-running a selection can never double-generate
- * and never overwrites an existing artifact.
+ * WITHOUT THE OVERWRITE BOX, EVERYTHING IS ADDITIVE AND IDEMPOTENT, because the
+ * underlying seams already are: a batch targets only names with no authored
+ * detail of their own, the image queue skips entities that already carry an
+ * image, the map queue skips encounters that already carry a map, and the
+ * portrait fill enumerates away kinds that already carry art. Re-running such a
+ * selection can never double-generate and never overwrites an existing artifact.
+ *
+ * WITH IT (docs/17 row 422 — the owner's model evaluation: "all selected details
+ * that were already there get removed and generated freshly"), the selection's
+ * `overwrites` are regenerated through the SAME engines, never a second
+ * generator: a detail IN PLACE (the change seam's own engine — `runEntityBatch`
+ * with the row's `artifactId`, or `changeArtifact`'s repopulate for an
+ * encounter: same id, fresh text, the previous text kept as a revision), and
+ * the cover / battlemap / mob portraits DELETE-AFTER-REPLACE through each
+ * queue's own `regen` job (the old art goes only once the fresh art landed).
  *
  * A STOP IS CONSULTED BETWEEN EVERY UNIT (the app-level stop epoch,
  * `lib/stopEpoch`): the whole point of "Stop all" is that a stop ends the NEXT
@@ -92,6 +107,8 @@ export interface GenerationRunInput {
   imageKinds: readonly EntityKind[];
   levelRange: GenerationLevelRange;
   encounterExtras: EncounterExtras;
+  /** The dialog's overwrite box (docs/17 row 422); absent = off (additive). */
+  overwrite?: boolean;
 }
 
 /** What one run did (the dialog reports it; the queues carry their own progress). */
@@ -100,6 +117,8 @@ export interface GenerationRunReport {
   selection: GenerationSelection;
   /** Entities the batches produced an artifact for. */
   generated: number;
+  /** Existing details regenerated IN PLACE (the overwrite, docs/17 row 422). */
+  regenerated: number;
   /** Image jobs enqueued. */
   imageJobs: number;
   /** Battlemap jobs enqueued. */
@@ -123,7 +142,9 @@ export interface GenerationRunReport {
 
 /** The kinds the batch half runs, in the domain's stable order (encounters last). */
 function orderedDetailKinds(selection: GenerationSelection): EntityKind[] {
-  const kinds = new Set(selection.detail.map((target) => target.kind));
+  const kinds = new Set(
+    [...selection.detail, ...selection.overwrites.details].map((target) => target.kind),
+  );
   return ENTITY_KINDS.filter((kind) => kinds.has(kind));
 }
 
@@ -158,6 +179,7 @@ export async function runGenerationSelection(
   input: GenerationRunInput,
 ): Promise<GenerationRunReport> {
   const { module, artifacts, kinds, imageKinds, levelRange, encounterExtras } = input;
+  const overwrite = input.overwrite === true;
   const selection = selectGenerationTargets({
     module,
     artifacts,
@@ -165,10 +187,12 @@ export async function runGenerationSelection(
     imageKinds,
     levelRange,
     encounterExtras,
+    overwrite,
   });
   const report: GenerationRunReport = {
     selection,
     generated: 0,
+    regenerated: 0,
     imageJobs: 0,
     mapJobs: 0,
     portraitJobs: 0,
@@ -218,6 +242,7 @@ async function runSelectionUnlocked(
   gateFirst: boolean,
 ): Promise<GenerationRunReport> {
   const { campaign, kinds, imageKinds, levelRange, encounterExtras } = input;
+  const overwrite = input.overwrite === true;
   let { module } = input;
   let selection = planned;
   try {
@@ -227,7 +252,7 @@ async function runSelectionUnlocked(
     // gate can make visible): the two passes are model calls, and a selection
     // of images-only must not pay for them. The request is the ONE gate rule
     // (`entity-gate.entityGateNeeds`).
-    if (selection.detail.length > 0 || gateFirst) {
+    if (selection.detail.length > 0 || selection.overwrites.details.length > 0 || gateFirst) {
       runStep(module.id, 'classifying and normalizing the linked names (a model call)…');
       const gate = await openEntityGate(module.id, epoch, entityGateNeeds(module, input.artifacts));
       report.classified = gate.classified;
@@ -258,47 +283,67 @@ async function runSelectionUnlocked(
           imageKinds,
           levelRange,
           encounterExtras,
+          overwrite,
         });
         report.selection = selection;
       }
     }
 
     // 1) Entity details, one batch per kind, in the domain's stable order.
+    const detailCount = selection.detail.length + selection.overwrites.details.length;
     runStep(
       module.id,
-      `generating ${String(selection.detail.length)} detail${selection.detail.length === 1 ? '' : 's'} — each batch has its own entry below`,
+      `generating ${String(detailCount)} detail${detailCount === 1 ? '' : 's'} — each batch has its own entry below`,
     );
     for (const kind of orderedDetailKinds(selection)) {
       if (stoppedSince(epoch)) {
         report.stopped = true;
         return report;
       }
-      const targets = targetsOfKind(selection, kind);
-      if (targets.length === 0) continue;
-      const result = await runEntityBatch({
-        module,
-        campaign,
-        kind,
-        targets: targets.map((target) => ({ name: target.name })),
-      });
-      report.generated += result.generated.length;
-      // ONE reporting seam for both surfaces (docs/18 §2.3): the console payload
-      // and the toast are raised together, from the same count sentence the
-      // entity panel's batch button uses.
-      reportEntityBatchFailures({
-        module,
-        campaign,
-        kind,
-        total: targets.length,
-        failures: result.failed,
-      });
-      reportEntityBatchNotices({
-        module,
-        campaign,
-        kind,
-        total: targets.length,
-        notices: result.notices,
-      });
+      const overwrites = selection.overwrites.details.filter((target) => target.kind === kind);
+      // THE OVERWRITE, IN PLACE (docs/17 row 422). A non-encounter row rides the
+      // SAME batch as the kind's creations, aimed at its own row (`artifactId`):
+      // that is the change seam's entity lane (`changeArtifact` → `runEntityBatch`)
+      // without serializing a kind's rows through a one-artifact call. An
+      // encounter goes through `changeArtifact` itself (below): its regeneration
+      // is one of the encounter's own two operations, never the entity refill.
+      const inPlace = kind === 'encounter' ? [] : overwrites;
+      const targets = [
+        ...targetsOfKind(selection, kind).map((target) => ({ name: target.name })),
+        ...inPlace.map((target) => ({ name: target.name, artifactId: target.artifactId })),
+      ];
+      if (targets.length > 0) {
+        const result = await runEntityBatch({ module, campaign, kind, targets });
+        const inPlaceIds = new Set(inPlace.map((target) => target.artifactId));
+        const regenerated = result.produced.filter((entry) => inPlaceIds.has(entry.artifactId)).length;
+        report.generated += result.generated.length - regenerated;
+        report.regenerated += regenerated;
+        // ONE reporting seam for both surfaces (docs/18 §2.3): the console
+        // payload and the toast are raised together, from the same count
+        // sentence the entity panel's batch button uses.
+        reportEntityBatchFailures({
+          module,
+          campaign,
+          kind,
+          total: targets.length,
+          failures: result.failed,
+        });
+        reportEntityBatchNotices({
+          module,
+          campaign,
+          kind,
+          total: targets.length,
+          notices: result.notices,
+        });
+      }
+      if (kind === 'encounter' && overwrites.length > 0) {
+        const outcome = await regenerateEncountersInPlace(overwrites, epoch);
+        report.regenerated += outcome.regenerated;
+        if (outcome.stopped) {
+          report.stopped = true;
+          return report;
+        }
+      }
     }
 
     // THE RE-DERIVATION (docs/17 row 406). Every image/map/portrait detector
@@ -318,7 +363,9 @@ async function runSelectionUnlocked(
       imageKinds,
       levelRange,
       encounterExtras,
+      overwrite,
     });
+    const replacing = actual.overwrites;
 
     /** ONE line per ticked kind that produced nothing, with its reason. */
     const nameEmpty = (kind: string, reason: string): void => {
@@ -332,48 +379,64 @@ async function runSelectionUnlocked(
       return report;
     }
 
-    // 2) Images — the ACTUAL image targets after the detail pass.
+    // 2) Images — the ACTUAL image targets after the detail pass, plus the
+    // covers an overwrite REPLACES (delete-after-replace `regen` jobs).
     if (imageKinds.length > 0) {
-      if (actual.images.length === 0) {
+      if (actual.images.length === 0 && replacing.images.length === 0) {
         nameEmpty('images', 'no selected entity without an image exists after this run');
       } else {
-        useEntityImageQueue.getState().enqueue(
-          actual.images.map((target) => ({
-            campaignId: module.campaignId,
-            moduleId: module.id,
-            name: target.name,
-          })),
-        );
-        report.imageJobs = actual.images.length;
+        const queue = useEntityImageQueue.getState();
+        const job = (target: GenerationTarget) => ({
+          campaignId: module.campaignId,
+          moduleId: module.id,
+          name: target.name,
+        });
+        if (actual.images.length > 0) queue.enqueue(actual.images.map(job));
+        if (replacing.images.length > 0) {
+          queue.enqueueReplacing(replacing.images.map((target) => ({ ...job(target), regen: true })));
+        }
+        report.imageJobs = actual.images.length + replacing.images.length;
       }
     }
 
     // 3) Battlemaps — an EXPLICIT tick, never a side effect of generating an
     // encounter (the automatic trigger this row removes).
     if (encounterExtras.battlemaps) {
-      if (actual.maps.length === 0) {
+      if (actual.maps.length === 0 && replacing.maps.length === 0) {
         nameEmpty('battlemaps', 'no selected encounter needs one');
       } else {
-        useEncounterMapQueue.getState().enqueue(
-          actual.maps.map((target) => ({
-            campaignId: module.campaignId,
-            moduleId: module.id,
-            artifactId: target.artifactId,
-            name: target.name,
-          })),
-        );
-        report.mapJobs = actual.maps.length;
+        const queue = useEncounterMapQueue.getState();
+        const job = (target: GenerationEncounterTarget) => ({
+          campaignId: module.campaignId,
+          moduleId: module.id,
+          artifactId: target.artifactId,
+          name: target.name,
+        });
+        if (actual.maps.length > 0) queue.enqueue(actual.maps.map(job));
+        // An overwrite REDRAWS a mapped encounter: the Cartographer's finalize
+        // swaps the map slot (the old map leaves with the fresh one's commit).
+        if (replacing.maps.length > 0) {
+          queue.enqueueReplacing(replacing.maps.map((target) => ({ ...job(target), regen: true })));
+        }
+        report.mapJobs = actual.maps.length + replacing.maps.length;
       }
     }
 
     // 4) Mob portraits — an EXPLICIT tick, BOTH lanes through the ONE seam all
     // three callers share (docs/17 row 96).
     if (encounterExtras.mobPortraits) {
-      if (actual.mobPortraits.length === 0) {
+      if (actual.mobPortraits.length === 0 && replacing.mobPortraits.length === 0) {
         nameEmpty('mob portraits', 'no selected encounter has a creature without a portrait');
       } else {
         const failures: string[] = [];
-        for (const target of actual.mobPortraits) {
+        const republished: string[] = [];
+        // The fill for encounters with holes, then the overwrite's replace-all
+        // (both lanes, the ONE encounter-level regen seam) for the rest.
+        const work = [
+          ...actual.mobPortraits.map((target) => ({ target, replace: false })),
+          ...replacing.mobPortraits.map((target) => ({ target, replace: true })),
+        ];
+        for (const { target, replace } of work) {
           if (stoppedSince(epoch)) {
             report.stopped = true;
             break;
@@ -387,17 +450,29 @@ async function runSelectionUnlocked(
             continue;
           }
           try {
-            report.portraitJobs += (
-              await enqueueEncounterPortraitFill(encounter, module.campaignId)
-            ).enqueued;
+            if (replace) {
+              const replaced = await regenerateEncounterPortraits(encounter, module.campaignId);
+              report.portraitJobs += replaced.regenerated + replaced.filled;
+              republished.push(...replaced.republishedCanonical);
+            } else {
+              report.portraitJobs += (
+                await enqueueEncounterPortraitFill(encounter, module.campaignId)
+              ).enqueued;
+            }
           } catch (error) {
             failures.push(`"${target.name}" — ${errorMessage(error)}`);
           }
         }
         if (failures.length > 0) {
           toastError(
-            `${String(failures.length)} of ${String(actual.mobPortraits.length)} encounters ` +
+            `${String(failures.length)} of ${String(work.length)} encounters ` +
               `failed to enqueue mob portraits (${failures.join('; ')})`,
+          );
+        }
+        if (republished.length > 0) {
+          // The shared-slot consequence, said the way the encounter editor says it.
+          toastSuccess(
+            `Shared portrait republished for ${republished.map((name) => `"${name}"`).join(', ')} — future portraits in every campaign use the new art; existing covers elsewhere keep theirs`,
           );
         }
         // A stop mid-loop must not be reported as "nothing needed a portrait".
@@ -414,6 +489,9 @@ async function runSelectionUnlocked(
     const parts = [
       report.generated > 0
         ? `${String(report.generated)} artifact${report.generated === 1 ? '' : 's'} generated`
+        : null,
+      report.regenerated > 0
+        ? `${String(report.regenerated)} detail${report.regenerated === 1 ? '' : 's'} regenerated in place`
         : null,
       report.imageJobs > 0
         ? `${String(report.imageJobs)} image${report.imageJobs === 1 ? '' : 's'} queued`
@@ -437,4 +515,51 @@ async function runSelectionUnlocked(
     report.refused = errorMessage(error);
     return report;
   }
+}
+
+/**
+ * The ENCOUNTER half of a detail overwrite (docs/17 row 422): each existing
+ * encounter is regenerated IN PLACE through THE change seam
+ * (`changeArtifact`, docs/17 row 101) with the encounter's own REPOPULATE
+ * operation — a new roster and fresh content on the SAME row, its name, links
+ * and battlemap kept (the old content stays restorable from its revisions).
+ *
+ * WHY NOT "REGENERATE EVERYTHING": that operation also redraws the battlemap —
+ * an image the owner did not tick (battlemaps are an explicit tick, docs/17 row
+ * 406) — and on a multi-room encounter it leaves the old map in the gallery,
+ * the opposite of the owner's "the old one is removed". A ticked battlemap is
+ * redrawn by the map queue's own replace job instead. And `redesignProse` stays
+ * OFF: it RENAMES the encounter, and the selection finds an encounter's map and
+ * portrait work by its name, so a rename would silently detach it.
+ *
+ * Sequential, with the stop epoch consulted between encounters; a run the owner
+ * stopped is withdrawn, never reported as a failure. Every other failure is
+ * collected and raised as ONE loud toast (AGENTS rule 2).
+ */
+async function regenerateEncountersInPlace(
+  targets: readonly GenerationOverwriteTarget[],
+  epoch: number,
+): Promise<{ regenerated: number; stopped: boolean }> {
+  let regenerated = 0;
+  const failures: string[] = [];
+  for (const target of targets) {
+    if (stoppedSince(epoch)) return { regenerated, stopped: true };
+    try {
+      const result = await changeArtifact({
+        artifactId: target.artifactId,
+        encounter: { operation: 'repopulate' },
+      });
+      if (result.status === 'changed') regenerated += 1;
+      else failures.push(`"${target.name}" — ${result.reason}`);
+    } catch (error) {
+      if (stoppedSince(epoch)) return { regenerated, stopped: true };
+      failures.push(`"${target.name}" — ${errorMessage(error)}`);
+    }
+  }
+  if (failures.length > 0) {
+    toastError(
+      `${String(failures.length)} of ${String(targets.length)} encounters could not be regenerated (${failures.join('; ')})`,
+    );
+  }
+  return { regenerated, stopped: false };
 }

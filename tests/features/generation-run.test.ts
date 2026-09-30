@@ -2,7 +2,12 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  listArtifactsByCampaign,
+  listRevisions,
+  updateArtifact,
+} from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { patchModule, saveModule } from '@/db/moduleRepo';
 import {
@@ -18,6 +23,8 @@ import {
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
 import { generationRunActive, runGenerationSelection } from '@/features/modules/generation-run';
 import { useProgressStore } from '@/lib/progress';
+import { bumpStopEpoch } from '@/lib/stopEpoch';
+import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 import type * as moduleGenModule from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 
@@ -37,23 +44,41 @@ import { clearDatabase } from '../db/helpers';
  * the pool, which is the exact defect.
  */
 
-const { enqueueImageJobs, enqueueEncounterMaps, enqueuePortraitFill, runEntityBatchMock } =
-  vi.hoisted(() => ({
-    enqueueImageJobs: vi.fn(),
-    enqueueEncounterMaps: vi.fn(),
-    enqueuePortraitFill: vi.fn(),
-    runEntityBatchMock: vi.fn(),
-  }));
+const {
+  enqueueImageJobs,
+  replaceImageJobs,
+  enqueueEncounterMaps,
+  replaceEncounterMaps,
+  enqueuePortraitFill,
+  regeneratePortraits,
+  runEntityBatchMock,
+  changeArtifactMock,
+} = vi.hoisted(() => ({
+  enqueueImageJobs: vi.fn(),
+  replaceImageJobs: vi.fn(),
+  enqueueEncounterMaps: vi.fn(),
+  replaceEncounterMaps: vi.fn(),
+  enqueuePortraitFill: vi.fn(),
+  regeneratePortraits: vi.fn(),
+  runEntityBatchMock: vi.fn(),
+  changeArtifactMock: vi.fn(),
+}));
 
 vi.mock('@/features/modules/entity-image-queue', () => ({
-  useEntityImageQueue: { getState: () => ({ enqueue: enqueueImageJobs }) },
+  useEntityImageQueue: {
+    getState: () => ({ enqueue: enqueueImageJobs, enqueueReplacing: replaceImageJobs }),
+  },
 }));
 vi.mock('@/features/modules/encounter-map-queue', () => ({
-  useEncounterMapQueue: { getState: () => ({ enqueue: enqueueEncounterMaps }) },
+  useEncounterMapQueue: {
+    getState: () => ({ enqueue: enqueueEncounterMaps, enqueueReplacing: replaceEncounterMaps }),
+  },
 }));
 vi.mock('@/features/campaign/mob-portrait-queue', () => ({
   enqueueEncounterPortraitFill: enqueuePortraitFill,
+  regenerateEncounterPortraits: regeneratePortraits,
 }));
+vi.mock('@/features/modules/change-artifact', () => ({ changeArtifact: changeArtifactMock }));
 vi.mock('@/features/modules/entity-batch', () => ({
   runEntityBatch: runEntityBatchMock,
 }));
@@ -73,7 +98,7 @@ vi.mock('@/lib/toast', () => ({
   toastInfoPersistent: vi.fn(),
 }));
 
-const { toastSuccess } = await import('@/lib/toast');
+const { toastSuccess, toastError } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
 
 const RANGE = { min: 1, max: 3 };
@@ -198,6 +223,7 @@ async function run(
     imageKinds?: EntityKind[];
     battlemaps?: boolean;
     mobPortraits?: boolean;
+    overwrite?: boolean;
   },
 ) {
   return runGenerationSelection({
@@ -213,6 +239,7 @@ async function run(
       battlemaps: options.battlemaps ?? false,
       mobPortraits: options.mobPortraits ?? false,
     },
+    ...(options.overwrite === undefined ? {} : { overwrite: options.overwrite }),
   });
 }
 
@@ -439,5 +466,214 @@ describe('one run per module, and the run lives in the dock (docs/17 row 419)', 
     release();
     await first;
     expect(generationRunActive(module.id)).toBe(false);
+  });
+});
+
+/**
+ * THE OVERWRITE RUN (docs/17 row 422). Owner decisions: (1) text is REGENERATED
+ * IN PLACE — same artifact id, fresh text, the previous text restorable from the
+ * revisions; (2) images are REPLACED — delete-after-replace through each queue's
+ * own `regen` job. These pins hold the dispatcher to both: an overwrite detail
+ * goes to the change seam's in-place engine aimed at its OWN row (never a new
+ * artifact), an encounter goes through `changeArtifact`'s repopulate, and the
+ * image/map/portrait halves go through the replacing entries.
+ */
+describe('the overwrite run regenerates in place and replaces (docs/17 row 422)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    for (const mock of [
+      enqueueImageJobs,
+      replaceImageJobs,
+      enqueueEncounterMaps,
+      replaceEncounterMaps,
+      enqueuePortraitFill,
+      regeneratePortraits,
+      runEntityBatchMock,
+      changeArtifactMock,
+    ]) {
+      mock.mockReset();
+    }
+    toastSuccessMock.mockReset();
+    vi.mocked(toastError).mockReset();
+    useProgressStore.getState().reset();
+    regeneratePortraits.mockResolvedValue({ regenerated: 2, filled: 0, republishedCanonical: [] });
+  });
+
+  it('an existing detail is refilled IN PLACE: same id, fresh text, a revision — never a new artifact', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id, false);
+    await saveModule(module);
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Kael',
+      summary: 'The old model wrote this.',
+      body: '',
+    });
+    // The engine's in-place refill, faked at its boundary: a target aimed at an
+    // EXISTING row is written onto that row through the repo (which records the
+    // revision), exactly as `runEngine`'s refill does.
+    runEntityBatchMock.mockImplementation(
+      async ({ targets }: RunEntityBatchInput): Promise<EntityBatchResult> => {
+        const produced: EntityBatchResult['produced'] = [];
+        for (const target of targets) {
+          if (target.artifactId === undefined) throw new Error('overwrite must aim at a row');
+          await updateArtifact(target.artifactId, { summary: 'The new model wrote this.' });
+          produced.push({ name: target.name, artifactId: target.artifactId, statBlock: 'regenerated' });
+        }
+        return { generated: targets.map((target) => target.name), cast: [], produced, failed: [], notices: [] };
+      },
+    );
+
+    const report = await run(campaign, module, { kinds: ['npc'], overwrite: true });
+
+    expect(runEntityBatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'npc', targets: [{ name: 'Kael', artifactId: kael.id }] }),
+    );
+    expect(report.regenerated).toBe(1);
+    expect(report.generated).toBe(0);
+    const after = await listArtifactsByCampaign(campaign.id);
+    expect(after.map((artifact) => artifact.id)).toEqual([kael.id]);
+    expect(after[0]?.summary).toBe('The new model wrote this.');
+    const revisions = await listRevisions(kael.id);
+    expect(revisions.some((revision) => revision.snapshot.summary === 'The old model wrote this.')).toBe(true);
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      expect.stringContaining('1 detail regenerated in place'),
+    );
+  });
+
+  it('WITHOUT the box the same world starts nothing for the existing row', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id, false);
+    await saveModule(module);
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Kael',
+      summary: 'The old model wrote this.',
+      body: '',
+    });
+
+    const report = await run(campaign, module, { kinds: ['npc'] });
+
+    expect(runEntityBatchMock).not.toHaveBeenCalled();
+    expect(report.regenerated).toBe(0);
+  });
+
+  it('an existing encounter goes through changeArtifact repopulate; its cover, map and portraits are REPLACED', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id, true);
+    await saveModule(module);
+    const cover = '00000000-0000-4000-8000-00000000c0de';
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Kael',
+      summary: 'Warden.',
+      body: '',
+      coverImageId: cover,
+      imageIds: [cover],
+    });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ash Fight',
+      summary: 'Goblins.',
+      body: '',
+      data: ENCOUNTER_DATA,
+    });
+    // Mapped: a layout and a map image already exist.
+    await updateArtifact(encounter.id, {
+      data: { ...ENCOUNTER_DATA, layout: adoptionArenaLayout('4:3'), mapImageId: cover },
+    });
+    runEntityBatchMock.mockImplementation(
+      ({ targets }: RunEntityBatchInput): Promise<EntityBatchResult> =>
+        Promise.resolve({
+          generated: targets.map((target) => target.name),
+          cast: [],
+          produced: targets.map((target) => ({
+            name: target.name,
+            artifactId: target.artifactId ?? 'missing',
+            statBlock: 'regenerated' as const,
+          })),
+          failed: [],
+          notices: [],
+        }),
+    );
+    changeArtifactMock.mockResolvedValue({
+      status: 'changed',
+      artifactId: encounter.id,
+      kind: 'encounter',
+      operation: 'encounter-repopulate',
+    });
+
+    const report = await run(campaign, module, {
+      kinds: ['npc', 'encounter'],
+      imageKinds: ['npc'],
+      battlemaps: true,
+      mobPortraits: true,
+      overwrite: true,
+    });
+
+    // The encounter is NOT an entity-batch target: it is regenerated through the
+    // ONE change seam, with the encounter's own non-map operation.
+    expect(runEntityBatchMock).toHaveBeenCalledTimes(1);
+    expect(runEntityBatchMock.mock.calls[0]?.[0]).toMatchObject({ kind: 'npc' });
+    expect(changeArtifactMock).toHaveBeenCalledWith({
+      artifactId: encounter.id,
+      encounter: { operation: 'repopulate' },
+    });
+    expect(report.regenerated).toBe(2);
+    // Images, maps and portraits go through the REPLACING entries as regen jobs.
+    expect(enqueueImageJobs).not.toHaveBeenCalled();
+    expect(replaceImageJobs).toHaveBeenCalledWith([
+      { campaignId: campaign.id, moduleId: module.id, name: 'Kael', regen: true },
+    ]);
+    expect(enqueueEncounterMaps).not.toHaveBeenCalled();
+    expect(replaceEncounterMaps).toHaveBeenCalledWith([
+      {
+        campaignId: campaign.id,
+        moduleId: module.id,
+        artifactId: encounter.id,
+        name: 'Ash Fight',
+        regen: true,
+      },
+    ]);
+    expect(enqueuePortraitFill).not.toHaveBeenCalled();
+    expect(regeneratePortraits).toHaveBeenCalledTimes(1);
+    expect(regeneratePortraits.mock.calls[0]?.[0]).toMatchObject({ id: encounter.id });
+    expect(report.imageJobs).toBe(1);
+    expect(report.mapJobs).toBe(1);
+    expect(report.portraitJobs).toBe(2);
+  });
+
+  it('a Stop between encounters ends the overwrite without reporting the stop as a failure', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id, true);
+    await saveModule(module);
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ash Fight',
+      summary: 'Goblins.',
+      body: '',
+      data: ENCOUNTER_DATA,
+    });
+    changeArtifactMock.mockImplementation(() => {
+      bumpStopEpoch();
+      return Promise.reject(new Error('Repopulate ended cancelled'));
+    });
+
+    const report = await run(campaign, module, { kinds: ['encounter'], overwrite: true });
+
+    expect(changeArtifactMock).toHaveBeenCalledTimes(1);
+    expect(report.stopped).toBe(true);
+    expect(report.regenerated).toBe(0);
+    expect(vi.mocked(toastError)).not.toHaveBeenCalled();
   });
 });

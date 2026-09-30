@@ -39,6 +39,15 @@ export interface ImageQueueJob {
   moduleId: Id;
   /** The exact entity (wiki-link) name; resolves to its artifact. */
   name: string;
+  /**
+   * Delete-after-replace (the generation dialog's overwrite, docs/17 row 422):
+   * the worker generates a FRESH image even though the entity has a cover,
+   * lands it as the cover, and only THEN removes the previous cover (gallery
+   * entry, revision pins and blob) in the same attach transaction — so a failed
+   * generation leaves the old cover intact. Enqueued through the factory's
+   * `enqueueReplacing`. Absent/false = the normal skip-if-imaged path.
+   */
+  regen?: boolean;
 }
 
 export const useEntityImageQueue = createJobQueue<ImageQueueJob>({
@@ -72,10 +81,21 @@ async function processJob(
     throw new Error('no artifact exists for this entity yet — detail it first');
   }
   // An image may have appeared while the job sat in the queue (added in
-  // the editor, another queue run) — the checkbox is already satisfied.
-  if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
+  // the editor, another queue run) — the checkbox is already satisfied. A
+  // replace job flows past: replacing an existing cover is its whole point.
+  if (job.regen !== true && (artifact.coverImageId !== null || artifact.imageIds.length > 0)) {
     return 'skipped';
   }
+  // What a replace supersedes: the previous COVER only. The rest of the gallery
+  // is not this job's — an encounter's battlemap lives there, and a cover that
+  // IS the battlemap is kept (removing it would strand `data.mapImageId`).
+  const previous = artifact.coverImageId;
+  const superseded =
+    job.regen === true &&
+    previous !== null &&
+    !(artifact.kind === 'encounter' && artifact.data.mapImageId === previous)
+      ? [previous]
+      : [];
   const prompt = await draftPrompt(artifact, job.campaignId);
   // ONE image, prepared for storage: the seam owns the prompt contract
   // assembly, the n=1 call (and why its candidate-count caps cannot fire),
@@ -93,10 +113,22 @@ async function processJob(
         campaignId: job.campaignId,
         ...generated,
         source: 'generated',
-        // The skip branch above guarantees the artifact had no image yet.
+        // The fresh image IS the cover: the skip branch guarantees there was
+        // none, or this is a replace that supersedes it.
         asCover: true,
       },
     ],
+    // Delete-after-replace, atomically with the fresh cover's commit (the
+    // mob-portrait queue's artifact-cover regen is the precedent): the old
+    // cover leaves the gallery, its revision pins are released, and its blob
+    // is freed when nothing else references it.
+    ...(superseded.length === 0
+      ? {}
+      : {
+          removeImageIds: superseded,
+          scrubImageIds: superseded,
+          pruneCandidates: { campaignId: job.campaignId, candidateIds: superseded },
+        }),
   });
   return 'done';
 }

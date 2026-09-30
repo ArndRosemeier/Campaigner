@@ -432,23 +432,13 @@ async function draftPrompt(
 }
 
 /**
- * Enqueues delete-after-replace regen jobs, upgrading any stale queued or
- * in-flight normal job for the same creature FIRST. The queue dedupes by
- * creature identity: a regen dropped against a stale normal job would strand
- * the regen as a silent no-op (the normal job skips on the still-imaged
- * creature and drains). The stale job is withdrawn before the regen is
- * enqueued — it never committed portrait work over an imaged creature (the
- * skip branch), so withdrawing it destroys nothing. State is probed first so
- * the dock counters move only when a real job is withdrawn.
+ * Enqueues delete-after-replace regen jobs through the queue factory's ONE
+ * upgrade seam (`enqueueReplacing`, docs/17 row 422): a stale queued or
+ * in-flight normal job for the same creature is withdrawn first, so the regen
+ * can never be deduped into a silent no-op.
  */
 function enqueueRegenJobs(jobs: MobPortraitJob[]): void {
-  const state = useMobPortraitQueue.getState();
-  const keys = new Set(jobs.map((job) => `${job.campaignId}:${job.creatureKey}`));
-  const stale = [...state.queued, ...state.active].filter((queued) =>
-    keys.has(`${queued.campaignId}:${queued.creatureKey}`),
-  );
-  for (const job of stale) state.dequeue(job);
-  state.enqueue(jobs.map((job) => ({ ...job, regen: true })));
+  useMobPortraitQueue.getState().enqueueReplacing(jobs.map((job) => ({ ...job, regen: true })));
 }
 
 /** One creature kind of the encounter's roster (the dedupe unit: one portrait
@@ -758,6 +748,8 @@ export interface MobPortraitRegenResult {
   regenerated: number;
   /** Citing names whose canonical global slot now carries fresh bytes. */
   republishedCanonical: string[];
+  /** Cover-less creatures enqueued by the normal batch for the remainder. */
+  filled: number;
 }
 
 export async function regenerateMobPortraits(
@@ -808,8 +800,8 @@ export async function regenerateMobPortraits(
   );
   // The cover-less remainder flows through the normal batch. Imaged targets
   // enumerate away there as already-imaged: no second job.
-  await enqueueMobPortraits(encounter, campaignId);
-  return { regenerated: imaged.length, republishedCanonical };
+  const filled = await enqueueMobPortraits(encounter, campaignId);
+  return { regenerated: imaged.length, republishedCanonical, filled: filled.enqueued };
 }
 
 /**
@@ -1041,6 +1033,8 @@ export async function enqueueInventedCreaturePortraits(
 export interface InventedCreatureRegenResult {
   /** Imaged invented creatures re-enqueued (deduped by identity). */
   regenerated: number;
+  /** Cover-less invented creatures enqueued by the normal invented batch. */
+  filled: number;
 }
 
 /**
@@ -1082,8 +1076,40 @@ export async function regenerateInventedCreaturePortraits(
   }
   enqueueRegenJobs(regen);
   // The cover-less remainder flows through the normal invented batch.
-  await enqueueInventedCreaturePortraits(encounter, campaignId, entryIndexes);
-  return { regenerated: regen.length };
+  const filled = await enqueueInventedCreaturePortraits(encounter, campaignId, entryIndexes);
+  return { regenerated: regen.length, filled: filled.enqueued };
+}
+
+/** What the encounter-level replace-all did, both lanes summed. */
+export interface EncounterPortraitRegenResult {
+  /** Imaged creatures replaced delete-after-replace (both lanes). */
+  regenerated: number;
+  /** Cover-less creatures enqueued for the remainder (both lanes). */
+  filled: number;
+  /** Citing names whose canonical global slot now carries fresh bytes. */
+  republishedCanonical: string[];
+}
+
+/**
+ * The encounter-level REPLACE-ALL: BOTH lanes, cited first and invented second
+ * — the regen twin of `enqueueEncounterPortraitFill`, and THE one way to
+ * replace every portrait of one encounter (docs/17 row 422), so no caller can
+ * regenerate one lane and silently leave the other's old art in place. Its
+ * callers are the encounter editor's "Replace all" and the generation dialog's
+ * overwrite run. Delete-after-replace throughout: the old portraits stay until
+ * each worker commits its replacement.
+ */
+export async function regenerateEncounterPortraits(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+): Promise<EncounterPortraitRegenResult> {
+  const cited = await regenerateMobPortraits(encounter, campaignId);
+  const invented = await regenerateInventedCreaturePortraits(encounter, campaignId);
+  return {
+    regenerated: cited.regenerated + invented.regenerated,
+    filled: cited.filled + invented.filled,
+    republishedCanonical: cited.republishedCanonical,
+  };
 }
 
 /** The `KindArt` vocabulary this queue's counts speak (re-exported so the

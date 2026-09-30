@@ -131,6 +131,17 @@ export interface JobQueueState<T> {
   /** Removes a pending (or aborts the in-flight) job for this key. */
   dequeue: (job: T) => void;
   /**
+   * THE delete-after-replace entry (docs/17 row 422): withdraws every queued
+   * or in-flight job that holds one of these jobs' keys, THEN enqueues these.
+   * The queue dedupes by key, so a replace job dropped against a stale normal
+   * job for the same slot would be a silent no-op (the normal job skips the
+   * still-imaged slot and drains). The stale job is a normal one that never
+   * wrote over an imaged slot (its skip branch), so withdrawing it destroys
+   * nothing. The caller marks its jobs as replacements (each queue's own
+   * `regen` flag) — this seam owns only the upgrade, once for every queue.
+   */
+  enqueueReplacing: (jobs: T[]) => void;
+  /**
    * Stop-all seam: withdraws every queued job and aborts every in-flight one
    * through the SAME per-job `dequeue` path (silent settlement, dock counter
    * decrement, body abort reaction — e.g. the encounter-map queue's
@@ -375,6 +386,12 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
         active: state.active.filter((candidate) => config.key(candidate) !== config.key(job)),
       }));
       withdrawJob(job);
+    },
+    enqueueReplacing: (jobs) => {
+      const keys = new Set(jobs.map((job) => config.key(job)));
+      const stale = [...get().queued, ...get().active].filter((job) => keys.has(config.key(job)));
+      for (const job of stale) get().dequeue(job);
+      get().enqueue(jobs);
     },
     cancelAll: async () => {
       const jobs = [...get().queued, ...get().active];

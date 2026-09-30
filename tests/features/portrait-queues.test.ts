@@ -1550,6 +1550,99 @@ describe('entity-image-queue.test.ts', () => {
       expect(useEntityImageQueue.getState().active).toEqual([]);
     });
 
+    /**
+     * THE OVERWRITE'S IMAGE HALF (docs/17 row 422, owner decision 2): "the fresh
+     * image becomes the cover and the old one is removed once the new one has
+     * landed". A `regen` job runs past the skip-if-imaged branch, lands the fresh
+     * cover, and releases ONLY the superseded cover — the rest of the gallery
+     * (an encounter's battlemap lives there) is not the job's.
+     */
+    it('a replace job lands a fresh cover and removes the old one; the rest of the gallery stays', async () => {
+      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+      const campaignId = campaign.id;
+      const moduleId = newId();
+      const bram = await createArtifact({
+        campaignId,
+        kind: 'npc',
+        name: 'Bram',
+        summary: 'A quiet farrier.',
+      });
+      const oldCover = await createImage({
+        campaignId,
+        blob: blobOf('old'),
+        mimeType: 'image/png',
+        width: 10,
+        height: 10,
+        source: 'generated',
+      });
+      const gallery = await createImage({
+        campaignId,
+        blob: blobOf('sketch'),
+        mimeType: 'image/png',
+        width: 10,
+        height: 10,
+        source: 'uploaded',
+      });
+      await updateArtifact(bram.id, {
+        imageIds: [oldCover.id, gallery.id],
+        coverImageId: oldCover.id,
+      });
+
+      useEntityImageQueue
+        .getState()
+        .enqueueReplacing([{ campaignId, moduleId, name: 'Bram', regen: true }]);
+
+      await waitFor(async () => {
+        const after = await getAnyArtifact(bram.id);
+        expect(after?.coverImageId).not.toBeNull();
+        expect(after?.coverImageId).not.toBe(oldCover.id);
+      });
+      const after = await getAnyArtifact(bram.id);
+      // The fresh image IS the cover; the old cover left the gallery; the other
+      // gallery image is untouched.
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      expect(after?.imageIds).toEqual([gallery.id, after?.coverImageId]);
+      expect(after?.imageIds).not.toContain(oldCover.id);
+      // …and the old cover's blob is gone once nothing references it.
+      await waitFor(async () => {
+        expect(await getImage(oldCover.id)).toBeUndefined();
+      });
+      expect(await getImage(gallery.id)).toBeDefined();
+      // Same row: the replace never re-creates the entity.
+      expect((await listArtifactsByCampaign(campaignId)).map((artifact) => artifact.id)).toEqual([
+        bram.id,
+      ]);
+    });
+
+    it('a replace whose generation FAILS keeps the old cover (delete-after-replace)', async () => {
+      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+      const campaignId = campaign.id;
+      const moduleId = newId();
+      const bram = await createArtifact({ campaignId, kind: 'npc', name: 'Bram', summary: 'A farrier.' });
+      const oldCover = await createImage({
+        campaignId,
+        blob: blobOf('old'),
+        mimeType: 'image/png',
+        width: 10,
+        height: 10,
+        source: 'generated',
+      });
+      await updateArtifact(bram.id, { imageIds: [oldCover.id], coverImageId: oldCover.id });
+      generateImagesMock.mockRejectedValue(new Error('provider down'));
+
+      useEntityImageQueue
+        .getState()
+        .enqueueReplacing([{ campaignId, moduleId, name: 'Bram', regen: true }]);
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalled();
+      });
+      const after = await getAnyArtifact(bram.id);
+      expect(after?.coverImageId).toBe(oldCover.id);
+      expect(after?.imageIds).toEqual([oldCover.id]);
+      expect(await getImage(oldCover.id)).toBeDefined();
+    });
+
     it('dequeue aborts in-flight jobs silently and drops pending ones', async () => {
       const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
       const campaignId: Id = campaign.id;
@@ -2849,7 +2942,7 @@ describe('mob-portrait-queue.test.ts', () => {
       const result = await regenerateMobPortraits(encounter, campaignId);
       // LOCAL: the copy cannot claim the shared slot, so nothing is republished
       // (and the pre-phase reads no chunk at all — it does not throw).
-      expect(result).toEqual({ regenerated: 1, republishedCanonical: [] });
+      expect(result).toEqual({ regenerated: 1, republishedCanonical: [], filled: 0 });
       await waitFor(async () => {
         const coverId = await creatureCoverIdOf(campaignId, creatureKey);
         expect(coverId).not.toBeNull();
@@ -3704,7 +3797,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const hung = hangGeneration('gen-1');
 
       const result = await regenerateMobPortraits(encounter, campaignId);
-      expect(result).toEqual({ regenerated: 1, republishedCanonical: [] });
+      expect(result).toEqual({ regenerated: 1, republishedCanonical: [], filled: 0 });
       // Delete-after-replace: NOTHING is stripped synchronously — the old
       // cover, its blob, and its snapshot pins are all intact while the regen
       // job is queued (a dropped queue loses nothing).
@@ -3756,7 +3849,7 @@ describe('mob-portrait-regen.test.ts', () => {
       generateImagesMock.mockRejectedValueOnce(new Error('model exploded'));
 
       const result = await regenerateMobPortraits(encounter, campaignId);
-      expect(result).toEqual({ regenerated: 1, republishedCanonical: [] });
+      expect(result).toEqual({ regenerated: 1, republishedCanonical: [], filled: 0 });
 
       // The worker fails LOUD on the queue's per-mob path (name + reason) and
       // lands on the retry list — while the old portrait is untouched.
@@ -3884,7 +3977,7 @@ describe('mob-portrait-regen.test.ts', () => {
       });
 
       const result = await regenerateMobPortraits(encounterA, campaignId);
-      expect(result).toEqual({ regenerated: 1, republishedCanonical: ['Ogre'] });
+      expect(result).toEqual({ regenerated: 1, republishedCanonical: ['Ogre'], filled: 0 });
       // Fresh bytes were spent (no-op re-clone would have generated nothing).
       expect(generateImagesMock).toHaveBeenCalledTimes(3);
       expect(chatMock).not.toHaveBeenCalled();
@@ -4035,7 +4128,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const hung = hangGeneration('gen-2');
 
       const result = await regenerateInventedCreaturePortraits(encounter, campaignId);
-      expect(result).toEqual({ regenerated: 1 });
+      expect(result).toEqual({ regenerated: 1, filled: 0 });
       // Delete-after-replace: the old cover stays live until the worker
       // commits the fresh one (a dropped queue loses nothing).
       expect(await creatureCover(createdKey, campaignId)).toBe(oldCoverId);
@@ -4086,7 +4179,7 @@ describe('mob-portrait-regen.test.ts', () => {
       generateImagesMock.mockRejectedValueOnce(new Error('model exploded'));
 
       const result = await regenerateInventedCreaturePortraits(encounter, campaignId);
-      expect(result).toEqual({ regenerated: 1 });
+      expect(result).toEqual({ regenerated: 1, filled: 0 });
 
       await waitFor(() => {
         expect(useMobPortraitQueue.getState().failed).toHaveLength(1);
@@ -4165,7 +4258,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const hungEntry = hangGeneration('gen-fresh');
 
       const result = await regenerateInventedCreaturePortraits(encounter, campaignId, [1]);
-      expect(result).toEqual({ regenerated: 1 });
+      expect(result).toEqual({ regenerated: 1, filled: 0 });
       // The unselected entry keeps its cover; the selected one is replaced
       // delete-after-replace (old cover live until the worker commits).
       expect(await creatureCover(oozeKey, campaignId)).toBe(oozeCover);

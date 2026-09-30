@@ -31,7 +31,7 @@ vi.mock('@/features/campaign/mob-portrait-queue', () => ({
   enqueueMobPortraits: vi.fn(),
   enqueueInventedCreaturePortraits: vi.fn(),
   planMobPortraitBatch: vi.fn(),
-  regenerateMobPortraits: vi.fn(),
+  regenerateEncounterPortraits: vi.fn(),
   regenerateInventedCreaturePortraits: vi.fn(),
 }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
@@ -41,14 +41,17 @@ const {
   enqueueMobPortraits,
   enqueueInventedCreaturePortraits,
   planMobPortraitBatch,
-  regenerateMobPortraits,
+  regenerateEncounterPortraits,
   regenerateInventedCreaturePortraits,
 } = await import('@/features/campaign/mob-portrait-queue');
 const enqueueFillMock = vi.mocked(enqueueEncounterPortraitFill);
 const enqueueMobPortraitsMock = vi.mocked(enqueueMobPortraits);
 const enqueueInventedMock = vi.mocked(enqueueInventedCreaturePortraits);
 const planMock = vi.mocked(planMobPortraitBatch);
-const regenerateMobPortraitsMock = vi.mocked(regenerateMobPortraits);
+// MIGRATED (docs/17 row 422): Replace all runs BOTH lanes through the ONE
+// encounter-level seam (`regenerateEncounterPortraits`), so the pins observe that
+// seam; the per-entry invented action still calls its own lane directly.
+const regenerateEncounterMock = vi.mocked(regenerateEncounterPortraits);
 const regenerateInventedMock = vi.mocked(regenerateInventedCreaturePortraits);
 const { toastSuccess, toastInfo } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
@@ -99,7 +102,7 @@ beforeEach(() => {
   enqueueMobPortraitsMock.mockReset();
   enqueueInventedMock.mockReset();
   planMock.mockReset();
-  regenerateMobPortraitsMock.mockReset();
+  regenerateEncounterMock.mockReset();
   regenerateInventedMock.mockReset();
   toastSuccessMock.mockReset();
   toastInfoMock.mockReset();
@@ -107,8 +110,8 @@ beforeEach(() => {
   enqueueFillMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   enqueueMobPortraitsMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
-  regenerateMobPortraitsMock.mockResolvedValue({ regenerated: 0, republishedCanonical: [] });
-  regenerateInventedMock.mockResolvedValue({ regenerated: 0 });
+  regenerateEncounterMock.mockResolvedValue({ regenerated: 0, filled: 0, republishedCanonical: [] });
+  regenerateInventedMock.mockResolvedValue({ regenerated: 0, filled: 0 });
 });
 
 describe('MobPortraitsSection invented-creature actions', () => {
@@ -230,7 +233,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     expect(copy).toMatch(/Filling adds only the missing portrait and keeps the 2 that exist/);
     expect(copy).toMatch(/Replacing regenerates all 2 existing portraits and still fills the missing one/);
     expect(enqueueFillMock).not.toHaveBeenCalled();
-    expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
 
     const fill = screen.getByTestId('mob-portraits-choice-fill');
     expect(fill.textContent).toMatch(/Fill the missing 1/);
@@ -239,7 +242,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
       expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
     // The imaged kinds are untouched: no regen path ran at all.
-    expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
     expect(regenerateInventedMock).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
@@ -256,8 +259,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
       { name: 'Ogre', source: RULEBOOK },
     ]);
     planMock.mockResolvedValue(plan({ missing: ['Ogre'], imaged: ['Goblin Boss', 'Gloom Ooze'] }));
-    regenerateMobPortraitsMock.mockResolvedValue({ regenerated: 2, republishedCanonical: [] });
-    regenerateInventedMock.mockResolvedValue({ regenerated: 1 });
+    regenerateEncounterMock.mockResolvedValue({ regenerated: 3, filled: 0, republishedCanonical: [] });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     const user = userEvent.setup();
@@ -267,8 +269,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
 
     await user.click(screen.getByTestId('mob-portraits-choice-replace'));
     await waitFor(() => {
-      expect(regenerateMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
-      expect(regenerateInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+      expect(regenerateEncounterMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
@@ -298,7 +299,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     // Never the all-generated toast in a state that still has a hole.
     expect(toastSuccessMock).not.toHaveBeenCalledWith('All mob portraits are already generated');
     expect(enqueueFillMock).not.toHaveBeenCalled();
-    expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   });
 
@@ -321,15 +322,15 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith('All mob portraits are already generated');
     });
-    expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
 
     // And the replace action itself works.
     await user.click(screen.getByTestId('generate-mob-portraits'));
     await screen.findByTestId('mob-portraits-choice-dialog');
-    regenerateMobPortraitsMock.mockResolvedValue({ regenerated: 1, republishedCanonical: [] });
+    regenerateEncounterMock.mockResolvedValue({ regenerated: 1, filled: 0, republishedCanonical: [] });
     await user.click(screen.getByTestId('mob-portraits-choice-replace'));
     await waitFor(() => {
-      expect(regenerateMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+      expect(regenerateEncounterMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
@@ -424,7 +425,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     });
     await flushAsyncUpdates();
     expect(screen.queryByTestId('mob-portraits-choice-dialog')).toBeNull();
-    expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith('Filling 1 missing portrait — nothing is replaced');
     });
@@ -476,7 +477,7 @@ describe('MobPortraitsSection per-entry invented confirm (unchanged)', () => {
   it('per-entry already-imaged offers regen for that entry; Confirm regenerates, Cancel replays the old toast', async () => {
     const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
     enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: ['Gloom Ooze'] });
-    regenerateInventedMock.mockResolvedValue({ regenerated: 1 });
+    regenerateInventedMock.mockResolvedValue({ regenerated: 1, filled: 0 });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     const user = userEvent.setup();

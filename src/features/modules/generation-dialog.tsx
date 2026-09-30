@@ -41,9 +41,11 @@ import { patchModule } from '@/db/moduleRepo';
 import {
   GENERATION_KINDS,
   generationKindLabel,
+  overwriteJobCount,
   selectGenerationTargets,
   type GenerationKind,
   type GenerationLevelRange,
+  type GenerationOverwrites,
 } from '@/features/modules/generation-selection';
 import { namesAwaitingGate } from '@/features/modules/entity-gate';
 import {
@@ -70,6 +72,14 @@ import { toastError, toastInfo } from '@/lib/toast';
  * work starts. A WIDE selection (more jobs than `WIDE_SELECTION_JOBS`) asks for a
  * second, explicit confirmation naming the same count.
  *
+ * OVERWRITE IS ONE BOX, OFF BY DEFAULT (docs/17 row 422 — the owner's model
+ * evaluation: "all selected details that were already there get removed and
+ * generated freshly"). Ticked, the selection ALSO covers what already exists,
+ * and Generate asks before it replaces anything: the SAME confirmation as a wide
+ * selection (never two stacked questions), naming the per-kind counts and what
+ * happens to the old work — text stays restorable from revisions, old images
+ * are deleted once the fresh ones have landed. Nothing to replace, no question.
+ *
  * THE DEDUPE RULE AND THE PREMISE ARE SAID OUT LOUD. An entity named in several
  * levels is generated ONCE, at its FIRST mention — the dialog lists the affected
  * names and their later levels rather than choosing silently. A name that only
@@ -92,6 +102,20 @@ const DEFAULT_KINDS: readonly GenerationKind[] = ENTITY_KINDS;
 /** "Level 3" / "Premise (no level yet)". */
 function levelLabel(level: number): string {
   return level === MODULE_PREMISE_LEVEL ? 'Premise (no level yet)' : `Level ${String(level)}`;
+}
+
+/** "3 details, 1 image" — the overwrite counts per kind of work, zeros left out. */
+function overwriteCountLine(overwrites: GenerationOverwrites): string {
+  const parts = [
+    [overwrites.details.length, 'detail', 'details'],
+    [overwrites.images.length, 'image', 'images'],
+    [overwrites.maps.length, 'battlemap', 'battlemaps'],
+    [overwrites.mobPortraits.length, 'encounter’s mob portraits', 'encounters’ mob portraits'],
+  ] as const;
+  return parts
+    .filter(([count]) => count > 0)
+    .map(([count, one, many]) => `${String(count)} ${count === 1 ? one : many}`)
+    .join(', ');
 }
 
 /** "Levels 1–3" / "Level 2" / "the premise only (no level yet)". */
@@ -138,6 +162,9 @@ export function GenerationDialog({
   });
   const [battlemaps, setBattlemaps] = useState(false);
   const [mobPortraits, setMobPortraits] = useState(false);
+  // The overwrite box (docs/17 row 422): OFF unless ticked, never remembered —
+  // replacing existing work is a choice made for ONE run.
+  const [overwrite, setOverwrite] = useState(false);
   // A run for this module is in progress while its dock entry exists (docs/17
   // row 419) — the dialog closes at once, so this is what a reopened dialog
   // reads, never a flag that died with the last one.
@@ -166,21 +193,28 @@ export function GenerationDialog({
         // plan: an extra the owner did not tick contributes nothing (docs/17
         // row 406 — a printed count the run would not honour was the defect).
         encounterExtras: { battlemaps, mobPortraits },
+        overwrite,
       }),
-    [module, artifacts, kinds, imageKinds, range, battlemaps, mobPortraits],
+    [module, artifacts, kinds, imageKinds, range, battlemaps, mobPortraits, overwrite],
   );
 
   // The PLAN the scope statement prints, per kind: the work that exists now
   // PLUS the work this run's own detail pass will unlock (docs/17 row 406).
   // The dispatcher re-reads the pool after the pass and enqueues exactly that
   // union, so the printed number is the number that runs.
-  const plannedImages = selection.images.length + selection.pendingImages.length;
-  const plannedMaps = battlemaps
-    ? selection.maps.length + selection.pendingEncounters.length
-    : 0;
-  const plannedPortraits = mobPortraits
-    ? selection.mobPortraits.length + selection.pendingEncounters.length
-    : 0;
+  // The overwrite's own jobs (all zero with the box off) are part of the SAME
+  // per-kind numbers: the printed line always sums to `totalCount`.
+  const { overwrites } = selection;
+  const replacing = overwriteJobCount(overwrites);
+  const plannedDetails = selection.detail.length + overwrites.details.length;
+  const plannedImages =
+    selection.images.length + selection.pendingImages.length + overwrites.images.length;
+  const plannedMaps =
+    (battlemaps ? selection.maps.length + selection.pendingEncounters.length : 0) +
+    overwrites.maps.length;
+  const plannedPortraits =
+    (mobPortraits ? selection.mobPortraits.length + selection.pendingEncounters.length : 0) +
+    overwrites.mobPortraits.length;
 
   // THE PER-LEVEL ENCOUNTER MINIMUM (docs/17 row 401). It lives on the module row
   // (`encounterFloorGuardrail`) because it is a rule OF THIS DOCUMENT read by the
@@ -241,6 +275,7 @@ export function GenerationDialog({
       imageKinds,
       levelRange: range,
       encounterExtras: { battlemaps, mobPortraits },
+      overwrite,
     });
     if (report.refused !== null) return; // the seam toasted the reason
     if (report.stopped) {
@@ -248,7 +283,11 @@ export function GenerationDialog({
       return;
     }
     const started =
-      report.generated + report.imageJobs + report.mapJobs + report.portraitJobs;
+      report.generated +
+      report.regenerated +
+      report.imageJobs +
+      report.mapJobs +
+      report.portraitJobs;
     // The run's own summary already NAMED every ticked kind that produced
     // nothing, with its reason (docs/17 row 406) — this fallback only covers
     // the genuinely-nothing case, so it can never claim "everything already
@@ -402,6 +441,29 @@ export function GenerationDialog({
               </div>
             </fieldset>
 
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="pb-1 text-sm font-medium">Existing work (off unless ticked)</legend>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="generation-overwrite"
+                  data-testid="generation-overwrite"
+                  checked={overwrite}
+                  onCheckedChange={(checked) => {
+                    setOverwrite(checked);
+                  }}
+                />
+                <Label htmlFor="generation-overwrite" className="text-sm">
+                  Overwrite existing — regenerate the selected details, images, battlemaps and mob
+                  portraits that already exist
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                For comparing models: text is regenerated in place (the old text stays restorable
+                from the artifact’s revisions); old images are deleted once the new ones have
+                landed. Generate asks before anything is replaced.
+              </p>
+            </fieldset>
+
             <fieldset className="flex flex-col gap-1.5" data-testid="generation-encounter-minimum">
               <legend className="pb-1 text-sm font-medium">Encounter minimum</legend>
               <div className="flex items-center gap-2">
@@ -476,8 +538,15 @@ export function GenerationDialog({
                 }`}
               </p>
               <p className="mt-1" data-testid="generation-scope-count">
-                {`${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'} — ${String(selection.detail.length)} detail${selection.detail.length === 1 ? '' : 's'}, ${String(plannedImages)} image${plannedImages === 1 ? '' : 's'}, ${String(plannedMaps)} battlemap${plannedMaps === 1 ? '' : 's'}, ${String(plannedPortraits)} mob portrait${plannedPortraits === 1 ? '' : 's'}`}
+                {`${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'} — ${String(plannedDetails)} detail${plannedDetails === 1 ? '' : 's'}, ${String(plannedImages)} image${plannedImages === 1 ? '' : 's'}, ${String(plannedMaps)} battlemap${plannedMaps === 1 ? '' : 's'}, ${String(plannedPortraits)} mob portrait${plannedPortraits === 1 ? '' : 's'}`}
               </p>
+              {overwrite && (
+                <p className="mt-1" data-testid="generation-scope-overwrite">
+                  {replacing === 0
+                    ? 'Overwrite: nothing selected exists yet — nothing is replaced.'
+                    : `Overwrite: ${overwriteCountLine(overwrites)} already exist${replacing === 1 ? 's' : ''} and will be replaced.`}
+                </p>
+              )}
               {selection.levels.length > 0 && (
                 <p className="mt-1 text-muted-foreground" data-testid="generation-scope-levels">
                   {selection.levels
@@ -545,8 +614,11 @@ export function GenerationDialog({
                 data-testid="generation-run"
                 disabled={blocked || empty || running}
                 onClick={() => {
-                  if (selection.totalCount >= WIDE_SELECTION_JOBS) setConfirmOpen(true);
-                  else void run();
+                  // ONE question for both reasons to ask (a wide selection, or
+                  // existing work about to be replaced) — never two stacked.
+                  if (selection.totalCount >= WIDE_SELECTION_JOBS || replacing > 0) {
+                    setConfirmOpen(true);
+                  } else void run();
                 }}
               >
                 <SparklesIcon aria-hidden data-icon="inline-start" />
@@ -568,13 +640,45 @@ export function GenerationDialog({
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent data-testid="generation-wide-confirm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Start {selection.totalCount} generation jobs?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {replacing > 0
+                ? `Replace existing work and start ${String(selection.totalCount)} generation jobs?`
+                : `Start ${String(selection.totalCount)} generation jobs?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {`This is a wide selection: ${rangeLabel(range)}, ${kinds.map(generationKindLabel).join(', ')} — ${String(selection.detail.length)} details, ${String(plannedImages)} images, ${String(plannedMaps)} battlemaps and ${String(plannedPortraits)} mob portraits. Every job is additive: nothing already generated is replaced.`}
+              {`${replacing > 0 ? 'The selection' : 'This is a wide selection'}: ${rangeLabel(range)}, ${kinds.map(generationKindLabel).join(', ')} — ${String(plannedDetails)} details, ${String(plannedImages)} images, ${String(plannedMaps)} battlemaps and ${String(plannedPortraits)} mob portraits.${replacing > 0 ? '' : ' Every job is additive: nothing already generated is replaced.'}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {replacing > 0 && (
+            <div className="flex flex-col gap-1 text-sm" data-testid="generation-overwrite-confirm">
+              <p className="font-medium" data-testid="generation-overwrite-counts">
+                {`Overwrite replaces ${overwriteCountLine(overwrites)}.`}
+              </p>
+              {overwrites.details.length > 0 && (
+                <p className="text-muted-foreground">
+                  Details are regenerated in place by the current model: same artifact, links and
+                  battles keep working, and the previous text stays restorable from the artifact’s
+                  revisions. An encounter gets a new roster and fresh content; its name and
+                  battlemap are kept (tick Battlemaps to redraw the map too).
+                </p>
+              )}
+              {overwrites.images.length + overwrites.maps.length + overwrites.mobPortraits.length > 0 && (
+                <p className="text-muted-foreground">
+                  Old images, battlemaps and portraits are DELETED once their replacement has
+                  landed (a failed generation keeps the old one). A library creature cited by its
+                  canonical name shares one portrait across campaigns — replacing it changes the
+                  portrait every future campaign gets.
+                </p>
+              )}
+              {overwrites.kept.length > 0 && (
+                <p className="text-muted-foreground" data-testid="generation-overwrite-kept">
+                  {`Not overwritten: ${overwrites.kept.map((entry) => `${entry.name} (${entry.reason})`).join('; ')}.`}
+                </p>
+              )}
+            </div>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel data-testid="generation-wide-confirm-cancel">Cancel</AlertDialogCancel>
             <AlertDialogAction
               data-testid="generation-wide-confirm-run"
               onClick={() => {

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createArtifact,
   createCampaign,
   createModule,
   modulePartSchema,
@@ -168,6 +169,7 @@ describe('the scope statement', () => {
     runGenerationSelection.mockResolvedValue({
       selection: expected,
       generated: 5,
+      regenerated: 0,
       imageJobs: 0,
       mapJobs: 0,
       portraitJobs: 0,
@@ -267,6 +269,7 @@ describe('the dialog closes the moment Generate is pressed (docs/17 row 419)', (
           encounterExtras: { battlemaps: false, mobPortraits: false },
         }),
         generated: 1,
+        regenerated: 0,
         imageJobs: 0,
         mapJobs: 0,
         portraitJobs: 0,
@@ -359,6 +362,7 @@ describe('a wide selection asks first', () => {
         encounterExtras: { battlemaps: false, mobPortraits: false },
       }),
       generated: 0,
+      regenerated: 0,
       imageJobs: 0,
       mapJobs: 0,
       portraitJobs: 0,
@@ -423,7 +427,7 @@ describe('per-kind images (docs/17 row 397)', () => {
     });
     runGenerationSelection.mockResolvedValue({
       selection: selectGenerationTargets({ module, artifacts: ARTIFACTS, kinds: ['npc'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 }, encounterExtras: { battlemaps: false, mobPortraits: false } }),
-      generated: 0, imageJobs: 0, mapJobs: 0, portraitJobs: 0, refused: null, classified: [], stopped: false, notes: [],
+      generated: 0, regenerated: 0, imageJobs: 0, mapJobs: 0, portraitJobs: 0, refused: null, classified: [], stopped: false, notes: [],
     });
     await user.click(screen.getByTestId('generation-run'));
     await waitFor(() => {
@@ -525,6 +529,7 @@ describe('a ticked kind that produced nothing is NAMED, never a silent finish (d
         encounterExtras: { battlemaps: false, mobPortraits: false },
       }),
       generated: 0,
+      regenerated: 0,
       imageJobs: 0,
       mapJobs: 0,
       portraitJobs: 0,
@@ -556,5 +561,163 @@ describe('a ticked kind that produced nothing is NAMED, never a silent finish (d
         'Nothing to generate — every selected entity already has its detail, image and map.',
       );
     });
+  });
+});
+
+/**
+ * THE OVERWRITE BOX (docs/17 row 422). The owner asked for *"an overwrite
+ * checkbox (with confirmation if there is something to overwrite)"*. So: the box
+ * is off by default; ticked, Generate asks ONE question (the wide-selection
+ * confirmation, never a second stacked one) ONLY when the seam reports something
+ * to replace; the question names the per-kind counts; Cancel runs nothing.
+ */
+describe('the overwrite box (docs/17 row 422)', () => {
+  /** Kael (npc) and Ash Gate (location) are already detailed by this module. */
+  function existing(module: Module): AnyArtifact[] {
+    return (['Kael', 'Ash Gate'] as const).map((name) =>
+      createArtifact({
+        campaignId: CAMPAIGN.id,
+        moduleId: module.id,
+        kind: name === 'Kael' ? 'npc' : 'location',
+        name,
+        summary: 'Written by the old model.',
+        body: '',
+      }),
+    );
+  }
+
+  function renderWith(module: Module, artifacts: readonly AnyArtifact[]): void {
+    render(
+      <GenerationDialog
+        module={module}
+        campaign={CAMPAIGN}
+        artifacts={artifacts}
+        open
+        onOpenChange={vi.fn()}
+        blockedReason={null}
+      />,
+    );
+  }
+
+  const REPORT = {
+    generated: 0,
+    regenerated: 0,
+    imageJobs: 0,
+    mapJobs: 0,
+    portraitJobs: 0,
+    refused: null,
+    classified: [],
+    stopped: false,
+    notes: [],
+  };
+
+  it('is OFF by default: existing work is not counted and Generate asks nothing', async () => {
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    const artifacts = existing(module);
+    renderWith(module, artifacts);
+
+    expect(screen.getByTestId('generation-overwrite').getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByTestId('generation-scope-overwrite')).toBeNull();
+    // Three names still need their detail (Mira, Old Keep, High Hall).
+    expect(screen.getByTestId('generation-scope-count').textContent).toContain('3 jobs');
+
+    runGenerationSelection.mockResolvedValue({
+      selection: selectGenerationTargets({
+        module,
+        artifacts,
+        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+      }),
+      ...REPORT,
+    });
+    await user.click(screen.getByTestId('generation-run'));
+    await waitFor(() => {
+      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
+    expect(runGenerationSelection.mock.calls[0]?.[0].overwrite).toBe(false);
+  });
+
+  it('ticked with NOTHING to replace: the scope says so and Generate still asks nothing', async () => {
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    renderWith(module, ARTIFACTS);
+
+    await user.click(screen.getByTestId('generation-overwrite'));
+    expect(screen.getByTestId('generation-scope-overwrite').textContent).toBe(
+      'Overwrite: nothing selected exists yet — nothing is replaced.',
+    );
+    runGenerationSelection.mockResolvedValue({
+      selection: selectGenerationTargets({
+        module,
+        artifacts: ARTIFACTS,
+        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+        overwrite: true,
+      }),
+      ...REPORT,
+    });
+    await user.click(screen.getByTestId('generation-run'));
+    await waitFor(() => {
+      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
+  });
+
+  it('ticked with existing work: ONE confirmation naming the per-kind counts; Cancel runs nothing, Confirm runs the overwrite', async () => {
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    const artifacts = existing(module);
+    renderWith(module, artifacts);
+
+    await user.click(screen.getByTestId('generation-overwrite'));
+    // The printed count is still the seam's own: 3 missing + 2 replaced.
+    expect(screen.getByTestId('generation-scope-count').textContent).toContain(
+      '5 jobs — 5 details',
+    );
+    expect(screen.getByTestId('generation-scope-overwrite').textContent).toBe(
+      'Overwrite: 2 details already exist and will be replaced.',
+    );
+
+    await user.click(screen.getByTestId('generation-run'));
+    // Nothing ran: the question is open, and it names what is replaced.
+    expect(runGenerationSelection).not.toHaveBeenCalled();
+    const confirm = screen.getByTestId('generation-wide-confirm');
+    expect(confirm.textContent).toContain('Replace existing work and start 5 generation jobs?');
+    expect(screen.getByTestId('generation-overwrite-counts').textContent).toBe(
+      'Overwrite replaces 2 details.',
+    );
+    expect(confirm.textContent).toContain('previous text stays restorable');
+    expect(confirm.textContent).not.toContain('nothing already generated is replaced');
+
+    await user.click(screen.getByTestId('generation-wide-confirm-cancel'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
+    });
+    expect(runGenerationSelection).not.toHaveBeenCalled();
+
+    runGenerationSelection.mockResolvedValue({
+      selection: selectGenerationTargets({
+        module,
+        artifacts,
+        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+        overwrite: true,
+      }),
+      ...REPORT,
+    });
+    await user.click(screen.getByTestId('generation-run'));
+    await user.click(screen.getByTestId('generation-wide-confirm-run'));
+    await waitFor(() => {
+      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    });
+    expect(runGenerationSelection.mock.calls[0]?.[0].overwrite).toBe(true);
   });
 });

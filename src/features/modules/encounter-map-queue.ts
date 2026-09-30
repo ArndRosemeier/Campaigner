@@ -16,6 +16,15 @@ export interface EncounterMapJob {
   moduleId: Id | null;
   artifactId: Id;
   name: string;
+  /**
+   * An EXPLICIT redraw (the generation dialog's overwrite, docs/17 row 422):
+   * the job runs the Cartographer even though the encounter already carries
+   * its map. The run's finalize is the single-map-slot replace (docs/11): the
+   * fresh map lands and the previous one leaves the gallery in the SAME
+   * transaction, so a failed run keeps the old map. Enqueued through the
+   * factory's `enqueueReplacing`. Absent/false = the automation's skip-if-mapped.
+   */
+  regen?: boolean;
 }
 
 /**
@@ -97,7 +106,8 @@ async function processJob(
   // The skip-guard half of the no-double-work contract (see
   // encounterNeedsMap): the encounter may have gained its map while the
   // job sat queued — a completed map is never regenerated here.
-  if (!encounterNeedsMap(artifact)) return 'skipped';
+  // An explicit redraw (`regen`) is the one job that runs past it.
+  if (!encounterNeedsMap(artifact) && job.regen !== true) return 'skipped';
   const cartographer = personas.find((persona) => persona.slug === 'encounter-cartographer');
   if (cartographer === undefined) throw new Error('Encounter Cartographer persona is missing');
   const runId = await runEngine.startRun({

@@ -8,8 +8,8 @@ import {
   enqueueEncounterPortraitFill,
   enqueueInventedCreaturePortraits,
   planMobPortraitBatch,
+  regenerateEncounterPortraits,
   regenerateInventedCreaturePortraits,
-  regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
 import { Button } from '@/components/ui/button';
 import { BlockedControl } from '@/components/blocked-control';
@@ -221,15 +221,12 @@ export function MobPortraitsSection({
     setBatchChoice(null);
     setBusy(true);
     try {
-      const rulebook =
-        !hasParticipants
-          ? { regenerated: 0, republishedCanonical: [] as string[] }
-          : await regenerateMobPortraits(artifact, campaignId);
-      const invented =
-        !hasParticipants
-          ? { created: 0, regenerated: 0 }
-          : await regenerateInventedCreaturePortraits(artifact, campaignId);
-      const regenerated = rulebook.regenerated + invented.regenerated;
+      // BOTH lanes through the ONE encounter-level replace-all seam (docs/17
+      // row 422) — the generation dialog's overwrite run calls the same one.
+      const replaced = !hasParticipants
+        ? { regenerated: 0, filled: 0, republishedCanonical: [] as string[] }
+        : await regenerateEncounterPortraits(artifact, campaignId);
+      const regenerated = replaced.regenerated;
       if (regenerated === 0) {
         // Covers landed between the dialog and Confirm (read-through or a
         // concurrent run) — nothing left to regen.
@@ -238,9 +235,9 @@ export function MobPortraitsSection({
         toastSuccess(
           `Regenerating ${String(regenerated)} portrait${regenerated === 1 ? '' : 's'} — existing covers are replaced`,
         );
-        if (rulebook.republishedCanonical.length > 0) {
+        if (replaced.republishedCanonical.length > 0) {
           toastSuccess(
-            `Shared portrait republished for ${rulebook.republishedCanonical.map((name) => `"${name}"`).join(', ')} — future portraits in every campaign use the new art; existing covers elsewhere keep theirs`,
+            `Shared portrait republished for ${replaced.republishedCanonical.map((name) => `"${name}"`).join(', ')} — future portraits in every campaign use the new art; existing covers elsewhere keep theirs`,
           );
         }
       }

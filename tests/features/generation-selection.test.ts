@@ -16,6 +16,7 @@ import {
   selectGenerationTargets,
   selectLevelNames,
 } from '@/features/modules/generation-selection';
+import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 
 /**
  * THE LEVEL-SCOPED GENERATION SELECTION (docs/23 §7, docs/17 row 394).
@@ -404,5 +405,157 @@ describe('the dialog vocabulary', () => {
       'Note',
       'Encounter',
     ]);
+  });
+});
+
+/**
+ * THE OVERWRITE BOX (docs/17 row 422). The owner's words: *"an overwrite
+ * checkbox … so that when checked, all selected details that were already there
+ * get removed and generated freshly. This is needed for model evaluation."* The
+ * seam's half of that: with the box on, the SAME selection also covers what
+ * already exists and reports it separately (the dialog names it before anything
+ * runs); with it off, nothing changes.
+ */
+describe('the overwrite box (docs/17 row 422)', () => {
+  const COVER = '00000000-0000-4000-8000-00000000c0de';
+  const MAP = '00000000-0000-4000-8000-0000000000aa';
+
+  /** The harbor module plus one encounter, and a world where most of it exists. */
+  function world(): { module: Module; artifacts: AnyArtifact[] } {
+    const base = moduleFixture();
+    const module: Module = {
+      ...base,
+      entityKinds: [
+        ...base.entityKinds,
+        { name: 'Ash Fight', kind: 'encounter', absorbed: [], levelHint: 3 },
+      ],
+      parts: base.parts.map((part, index) =>
+        index === 0 ? { ...part, markdown: `${part.markdown} [[Ash Fight]]` } : part,
+      ),
+    };
+    const own = (kind: 'npc' | 'location', name: string, coverImageId?: string): AnyArtifact =>
+      createArtifact({
+        campaignId: module.campaignId,
+        moduleId: module.id,
+        kind,
+        name,
+        summary: 'Already written.',
+        body: '',
+        ...(coverImageId === undefined ? {} : { coverImageId, imageIds: [coverImageId] }),
+      });
+    const blank = createArtifact({
+      campaignId: module.campaignId,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ash Fight',
+      summary: 'Goblins at the gate.',
+      body: '',
+    });
+    if (blank.kind !== 'encounter') throw new Error('fixture: not an encounter');
+    // Mapped (layout + map) and rostered: an existing battlemap AND portrait work.
+    const encounter: AnyArtifact = {
+      ...blank,
+      imageIds: [MAP],
+      data: {
+        ...blank.data,
+        layout: adoptionArenaLayout('4:3'),
+        mapImageId: MAP,
+        monsters: [
+          { name: 'Goblin', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+        ],
+      },
+    };
+    const artifacts: AnyArtifact[] = [
+      own('npc', 'Kael', COVER),
+      own('location', 'Ash Gate'),
+      // Mira resolves, but to a CAMPAIGN-level row this module does not own.
+      createArtifact({
+        campaignId: module.campaignId,
+        kind: 'npc',
+        name: 'Mira',
+        summary: 'Already written elsewhere.',
+        body: '',
+      }),
+      encounter,
+    ];
+    return { module, artifacts };
+  }
+
+  /** Ids are minted per call, so every comparison reads ONE world. */
+  const fixed = world();
+  const pick = (overwrite?: boolean) => {
+    const { module, artifacts } = fixed;
+    return selectGenerationTargets({
+      module,
+      artifacts,
+      kinds: ['npc', 'location', 'encounter'],
+      imageKinds: ['npc', 'location'],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: true, mobPortraits: true },
+      ...(overwrite === undefined ? {} : { overwrite }),
+    });
+  };
+
+  it('OFF (absent or false) leaves the selection exactly as it was and replaces nothing', () => {
+    const absent = pick();
+    const off = pick(false);
+    expect(off).toEqual(absent);
+    expect(off.overwrites).toEqual({ details: [], images: [], maps: [], mobPortraits: [], kept: [] });
+    // The additive run still sees only the missing work.
+    expect(off.detail.map((target) => target.name)).toEqual(['Old Keep', 'High Hall']);
+    expect(off.maps).toEqual([]);
+    expect(off.mobPortraits.map((target) => target.name)).toEqual(['Ash Fight']);
+  });
+
+  it('ON covers every selected name that already exists, reported per kind of work', () => {
+    const off = pick(false);
+    const on = pick(true);
+    const { artifacts } = fixed;
+    const idOf = (name: string) => artifacts.find((artifact) => artifact.name === name)?.id;
+
+    // Details: this module's own detailed rows, each with the row it regenerates.
+    expect(on.overwrites.details.map((target) => [target.name, target.artifactId])).toEqual([
+      ['Kael', idOf('Kael')],
+      ['Ash Gate', idOf('Ash Gate')],
+      ['Ash Fight', idOf('Ash Fight')],
+    ]);
+    // A row this module only LINKS to is named, never silently regenerated.
+    expect(on.overwrites.kept).toEqual([
+      {
+        name: 'Mira',
+        kind: 'npc',
+        reason: 'not this module’s own entity — change it where it lives',
+      },
+    ]);
+    // Images: only rows with a COVER to replace (Ash Gate has none — it stays
+    // ordinary additive image work).
+    expect(on.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
+    expect(on.images.map((target) => target.name)).toEqual(off.images.map((target) => target.name));
+    // The mapped encounter is a redraw; its portraits are a replace-all, and it
+    // is NOT also counted as a fill (one encounter, one portrait job).
+    expect(on.overwrites.maps.map((target) => target.artifactId)).toEqual([idOf('Ash Fight')]);
+    expect(on.overwrites.mobPortraits.map((target) => target.artifactId)).toEqual([idOf('Ash Fight')]);
+    expect(on.mobPortraits).toEqual([]);
+    // The additive work is untouched, and the announced count is TRUE: the old
+    // count, minus the fill the replace-all absorbed, plus every overwrite job.
+    expect(on.detail).toEqual(off.detail);
+    expect(on.totalCount).toBe(off.totalCount - 1 + 3 + 1 + 1 + 1);
+  });
+
+  it('an unticked extra replaces nothing of its kind', () => {
+    const { module, artifacts } = fixed;
+    const on = selectGenerationTargets({
+      module,
+      artifacts,
+      kinds: ['npc', 'location', 'encounter'],
+      imageKinds: [],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
+      overwrite: true,
+    });
+    expect(on.overwrites.images).toEqual([]);
+    expect(on.overwrites.maps).toEqual([]);
+    expect(on.overwrites.mobPortraits).toEqual([]);
+    expect(on.overwrites.details).toHaveLength(3);
   });
 });

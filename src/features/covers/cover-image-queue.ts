@@ -52,7 +52,7 @@ export interface CoverImageJob {
 
 export const useCoverImageQueue = createJobQueue<CoverImageJob>({
   name: 'cover-image-queue',
-  key: (job) => (job.kind === 'module' ? `module-cover:${job.moduleId ?? ''}` : `campaign-cover:${job.campaignId}`),
+  key: coverJobKey,
   dockGroup: (job) => ({
     id: job.kind === 'module' ? `module-cover-${job.moduleId ?? ''}` : `campaign-cover-${job.campaignId}`,
     label: job.kind === 'module' ? 'Generating module cover' : 'Generating campaign cover',
@@ -190,23 +190,13 @@ async function draftPrompt(target: CoverTarget): Promise<ImagePromptDraft> {
 }
 
 /**
- * Enqueues delete-after-replace regen jobs, upgrading any stale queued or
- * in-flight normal job for the same slot FIRST. The queue dedupes by slot
- * key: a regen dropped against a stale normal job would strand the regen
- * as a silent no-op (the normal job skips on the still-imaged slot and
- * drains). The stale job is withdrawn before the regen is enqueued — it
- * never committed cover work over an imaged slot (the skip branch), so
- * withdrawing it destroys nothing. State is probed first so the dock
- * counters move only when a real job is withdrawn.
+ * Enqueues delete-after-replace regen jobs through the queue factory's ONE
+ * upgrade seam (`enqueueReplacing`, docs/17 row 422): a stale queued or
+ * in-flight normal job for the same slot is withdrawn first, so the regen can
+ * never be deduped into a silent no-op.
  */
 function enqueueRegenJobs(jobs: CoverImageJob[]): void {
-  const state = useCoverImageQueue.getState();
-  const keys = new Set(jobs.map((job) => coverJobKey(job)));
-  const stale = [...state.queued, ...state.active].filter((queued) =>
-    keys.has(coverJobKey(queued)),
-  );
-  for (const job of stale) state.dequeue(job);
-  state.enqueue(jobs.map((job) => ({ ...job, regen: true })));
+  useCoverImageQueue.getState().enqueueReplacing(jobs.map((job) => ({ ...job, regen: true })));
 }
 
 function coverJobKey(job: CoverImageJob): string {
