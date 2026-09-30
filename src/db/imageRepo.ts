@@ -2,6 +2,7 @@ import {
   storedImageSchema,
   stampNewEntity,
   type Id,
+  type ImageGenerationCost,
   type StoredImage,
 } from '@/domain';
 import { db } from '@/db/db';
@@ -28,6 +29,8 @@ export interface NewStoredImage {
   source: 'generated' | 'uploaded';
   /** M5-C: `map` images are battlemaps — bigger intake cap, map pickers only. */
   role?: 'artwork' | 'map';
+  /** What generating it cost (docs/17 row 421); omitted/null = not recorded. */
+  generationCost?: ImageGenerationCost | null;
 }
 
 /**
@@ -55,6 +58,7 @@ export async function buildStoredImage(input: NewStoredImage): Promise<StoredIma
     model: input.model ?? '',
     source: input.source,
     ...(input.role === undefined ? {} : { role: input.role }),
+    generationCost: input.generationCost ?? null,
   });
 }
 

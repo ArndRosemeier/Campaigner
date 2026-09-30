@@ -1,4 +1,5 @@
 import { generateImages } from '@/llm/imageGen';
+import { generationCostOf, type ImageGenerationCost } from '@/domain';
 import { assembleImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
@@ -77,6 +78,8 @@ export interface GeneratedOneImage {
   /** The ASSEMBLED prompt — what the row records, not the draft. */
   prompt: string;
   model: string;
+  /** What the call cost (docs/17 row 421); null when not reported. */
+  generationCost: ImageGenerationCost | null;
 }
 
 export interface GenerateOneImageOptions {
@@ -113,5 +116,6 @@ export async function generateOneImage(
     height: intake.height,
     prompt: finalPrompt,
     model: generated.modelUsed,
+    generationCost: generationCostOf(generated),
   };
 }

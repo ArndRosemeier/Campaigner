@@ -41,7 +41,9 @@ beforeEach(() => {
   return clearDatabase();
 });
 
-async function seedWithImage(): Promise<{ artifactPath: string; imageId: string; campaignId: string }> {
+async function seedWithImage(
+  generationCost?: { usd: number; images: number },
+): Promise<{ artifactPath: string; imageId: string; campaignId: string }> {
   await seedBuiltInPersonas();
   await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   const campaign = await createCampaign({ name: 'Imagery', system: 'generic-d20' });
@@ -54,6 +56,7 @@ async function seedWithImage(): Promise<{ artifactPath: string; imageId: string;
     prompt: 'a tower',
     model: 'google/gemini-2.5-flash-image',
     source: 'generated',
+    ...(generationCost === undefined ? {} : { generationCost }),
   });
   const artifact = await createArtifact({
     campaignId: campaign.id,
@@ -136,6 +139,18 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   });
 
+  it('shows what generating the image cost (docs/17 row 421)', async () => {
+    const user = userEvent.setup();
+    const { artifactPath: path } = await seedWithImage({ usd: 0.04, images: 1 });
+    renderAppAt(path);
+
+    await screen.findByAltText('Artifact image', {}, { timeout: 5_000 });
+    await user.click(screen.getByRole('button', { name: /Open image/ }));
+    await screen.findByTestId('artifact-image-lightbox', {}, { timeout: 5_000 });
+    expect(screen.getByTestId('artifact-image-cost')).toHaveTextContent('$0.04');
+    await flushAsyncUpdates();
+  });
+
   it('opens the artifact lightbox fullscreen: viewport-filling dialog, image fills the reserved box (contain, upscale allowed), footer strip intact', async () => {
     const user = userEvent.setup();
     const { artifactPath: path } = await seedWithImage();
@@ -166,6 +181,8 @@ describe('images ui', () => {
     // The bottom overlay strip keeps the metadata line and the actions.
     const footer = screen.getByTestId('artifact-image-lightbox-footer');
     expect(footer.textContent).toContain('64×64 · image/webp · generated');
+    // No price was recorded for this image (docs/17 row 421): said, not hidden.
+    expect(screen.getByTestId('artifact-image-cost')).toHaveTextContent('price not recorded');
     // PROVENANCE (docs/17 row 93): the image MODEL is stated exactly once in
     // this dialog — as the caption under the image (the owner's requested
     // shape), not duplicated into the metadata line above the actions.

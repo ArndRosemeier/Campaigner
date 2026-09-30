@@ -6,7 +6,7 @@ import { ImageIcon, MapIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { createImage, listImagesByIds, setImageRole } from '@/db/imageRepo';
-import type { AnyArtifact, Id, StoredImage } from '@/domain';
+import { imageGenerationCostLabel, type AnyArtifact, type Id, type StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
 import { BlockedControl } from '@/components/blocked-control';
 import { Badge } from '@/components/ui/badge';
@@ -363,6 +363,9 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
                       this line keeps the source and the technical facts and
                       the dialog states the model exactly once. */}
                   {lightboxImage.source === 'generated' ? 'generated' : 'uploaded'}
+                  {imageGenerationCostLabel(lightboxImage) !== null && (
+                    <span data-testid="artifact-image-cost"> · {imageGenerationCostLabel(lightboxImage)}</span>
+                  )}
                 </DialogDescription>
                 <div className="flex gap-2">
                   {artifact.coverImageId === lightboxImage.id ? (

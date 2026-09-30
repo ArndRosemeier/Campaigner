@@ -3,6 +3,7 @@ import type { Transaction } from 'dexie';
 import {
   artifactRevisionRow,
   globalArtifactSchema,
+  imageProvenanceOf,
   stampNewEntity,
   type AnyArtifact,
   type Artifact,
@@ -232,8 +233,7 @@ export async function adoptLibraryArtifacts(
         mimeType: image.mimeType,
         width: image.width,
         height: image.height,
-        prompt: image.prompt,
-        model: image.model,
+        ...imageProvenanceOf(image),
         source: image.source,
         role: image.role,
       };

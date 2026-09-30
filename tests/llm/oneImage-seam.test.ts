@@ -35,8 +35,8 @@ const { generateOneImage, NO_IMAGE_FROM_API_MESSAGE } = await import('@/llm/oneI
 
 /** A full `GeneratedImages` result — the seam consumes only `images[0]` and
  * `modelUsed`, but the mock must satisfy the whole declared shape. */
-function apiResult(images: Blob[], modelUsed = 'requested-model'): GeneratedImages {
-  return { images, costUsd: null, cappedToOne: false, modelUsed, fallback: null, filteredCount: 0 };
+function apiResult(images: Blob[], modelUsed = 'requested-model', costUsd: number | null = null): GeneratedImages {
+  return { images, costUsd, cappedToOne: false, modelUsed, fallback: null, filteredCount: 0 };
 }
 
 const DRAFT: ImagePromptDraft = {
@@ -55,7 +55,7 @@ describe('generateOneImage — the ONE way to generate and prepare ONE image', (
   it('assembles the prompt contract, asks for exactly ONE image and intakes the returned blob', async () => {
     const raw = new Blob(['raw-bytes'], { type: 'image/png' });
     const stored = new Blob(['stored-bytes'], { type: 'image/webp' });
-    generateImagesMock.mockResolvedValue(apiResult([raw], 'escalated-model'));
+    generateImagesMock.mockResolvedValue(apiResult([raw], 'escalated-model', 0.04));
     intakeImageMock.mockResolvedValue({
       blob: stored,
       mimeType: 'image/webp',
@@ -91,9 +91,12 @@ describe('generateOneImage — the ONE way to generate and prepare ONE image', (
       height: 480,
       prompt: ASSEMBLED,
       model: 'escalated-model',
+      // What the call cost, as the storage writer records it (docs/17 row 421).
+      generationCost: { usd: 0.04, images: 1 },
     });
     expect(Object.keys(result).sort()).toEqual([
       'blob',
+      'generationCost',
       'height',
       'mimeType',
       'model',

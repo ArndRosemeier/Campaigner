@@ -1,5 +1,6 @@
 import {
   imageBlob,
+  imageProvenanceOf,
   mobPortraitCacheSchema,
   newId,
   stampNewEntity,
@@ -265,8 +266,7 @@ export async function createClonedCoverImage(options: {
     mimeType: options.source.mimeType,
     width: options.source.width,
     height: options.source.height,
-    prompt: options.source.prompt,
-    model: options.source.model,
+    ...imageProvenanceOf(options.source),
     role: 'artwork',
     source: 'generated',
   });

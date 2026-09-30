@@ -1,4 +1,4 @@
-import { imageBlob, type AnyArtifact, type Id, type StatBlock, type StoredImage } from '@/domain';
+import { imageBlob, imageProvenanceOf, type AnyArtifact, type Id, type StatBlock, type StoredImage } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { attachImagesToArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -278,8 +278,8 @@ async function slotBytes(imageId: Id): Promise<GeneratedOneImage> {
     mimeType: cached.mimeType,
     width: cached.width,
     height: cached.height,
-    prompt: cached.prompt,
-    model: cached.model,
+    ...imageProvenanceOf(cached),
+    generationCost: cached.generationCost ?? null,
   };
 }
 

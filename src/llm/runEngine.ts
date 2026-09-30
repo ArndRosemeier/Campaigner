@@ -158,6 +158,7 @@ import { ZodError, z } from 'zod';
 import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
 import { fallbackReasonWords } from '@/llm/openrouterErrors';
 import { generateImages } from '@/llm/imageGen';
+import { generationCostOf } from '@/domain/image';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
@@ -6186,6 +6187,7 @@ export class RunEngine {
       prompt,
       model: generated.modelUsed,
       source: 'generated',
+      generationCost: generationCostOf(generated),
       role: 'map',
     });
     // LOCATE + VERIFY (docs/11 vision path): the observed point per letter.
@@ -6445,6 +6447,7 @@ export class RunEngine {
         prompt,
         model: generated.modelUsed,
         source: 'generated',
+        generationCost: generationCostOf(generated),
         role: 'map',
       });
       imageIds.push(stored.id);
@@ -7135,6 +7138,7 @@ export class RunEngine {
         prompt: finalPrompt,
         model: generated.modelUsed,
         source: 'generated',
+        generationCost: generationCostOf(generated),
       });
       imageIds.push(stored.id);
     }
