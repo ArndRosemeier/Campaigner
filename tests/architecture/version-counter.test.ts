@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { isolatedGitEnv } from '../helpers/isolatedGit';
+
 import { publish, type Runner } from '../../scripts/publish.mjs';
 import {
   formatVersion,
@@ -205,7 +207,7 @@ describe('version.json is NOT code for the classifiers (docs/17 row 404)', () =>
       execFileSync(
         'git',
         ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args],
-        { cwd: repo, encoding: 'utf8' },
+        { cwd: repo, encoding: 'utf8', env: isolatedGitEnv() },
       );
     git('init', '-q', '-b', 'main');
     writeFileSync(join(repo, '.gitignore'), '.gate-logs/\n.campaigner-lock\n');
@@ -218,7 +220,7 @@ describe('version.json is NOT code for the classifiers (docs/17 row 404)', () =>
     const plan = execFileSync('bash', [join(repo, 'scripts/gate.sh')], {
       cwd: repo,
       encoding: 'utf8',
-      env: { ...process.env, GATE_PLAN_ONLY: '1', GATE_DIFF_BASE: base },
+      env: isolatedGitEnv({ GATE_PLAN_ONLY: '1', GATE_DIFF_BASE: base }),
     });
     expect(plan).toMatch(/docs-only/);
   });

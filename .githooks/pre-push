@@ -14,6 +14,15 @@
 set -u
 root="$(git rev-parse --show-toplevel)"
 cd "$root" || exit 1
+# A hook runs with GIT_DIR (and friends) pointing at THIS repository. Every git
+# command a test runs inherits them — including the ones that build a throwaway
+# repo in a temp dir — and then operates on the REAL repository instead. MEASURED
+# on the first push through this hook (docs/17 row 428): the version-counter and
+# build-status tests committed their fixtures onto the pushing branch, set
+# core.bare=true and wrote a [user] section into .git/config. Clear them all.
+for var in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$var"
+done
 mkdir -p .gate-logs
 log=".gate-logs/pre-push-$(date +%Y%m%dT%H%M%S).log"
 

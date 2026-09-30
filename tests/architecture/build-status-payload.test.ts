@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { isolatedGitEnv } from '../helpers/isolatedGit';
+
 /**
  * `scripts/buildStatus.mjs` — the deploy job's build-status writer (docs/17 row
  * 250, docs/18 §2), driven END TO END through its CLI against throwaway git
@@ -28,11 +30,15 @@ const STATUS_SCRIPT = join(process.cwd(), 'scripts/buildStatus.mjs');
 
 const GREEN_VERIFY = 'MY OWN: GATE GREEN — 344 files / 4483 tests, 7/7 chunks';
 
+/** Runs git in a throwaway repo — isolated from any GIT_* of the caller (row 428). */
+function gitIn(repo: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd: repo, encoding: 'utf8', env: isolatedGitEnv() });
+}
+
 /** A throwaway repo with a code commit, a docs commit and a second code commit. */
 function makeRepo(): { repo: string; code: string; docs: string; wip: string } {
   const repo = mkdtempSync(join(tmpdir(), 'campaigner-build-status-'));
-  const git = (...args: string[]): string =>
-    execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  const git = (...args: string[]): string => gitIn(repo, ...args);
   git('init', '-q');
   git('config', 'user.email', 'dev@campaigner.local');
   git('config', 'user.name', 'Campaigner Dev');
@@ -66,6 +72,7 @@ function runStatus(repo: string, board: string, head: string): { state: string; 
   execFileSync('node', [STATUS_SCRIPT, '--board', boardPath, '--out', outPath, '--head', head], {
     cwd: repo,
     encoding: 'utf8',
+    env: isolatedGitEnv(),
   });
   return JSON.parse(readFileSync(outPath, 'utf8')) as { state: string; detail: string };
 }
@@ -80,8 +87,7 @@ describe('scripts/buildStatus.mjs (docs/17 row 250)', () => {
 
   it('reads verified when the only change after the GATE GREEN landing is version.json (row 404)', () => {
     const { repo, wip } = makeRepo();
-    const git = (...args: string[]): string =>
-      execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+    const git = (...args: string[]): string => gitIn(repo, ...args);
     writeFileSync(join(repo, 'version.json'), '{ "major": 1, "build": 1 }\n');
     git('add', '-A');
     git('commit', '-q', '-m', 'chore(version): 1.001');
@@ -97,7 +103,7 @@ describe('scripts/buildStatus.mjs (docs/17 row 250)', () => {
     execFileSync(
       'node',
       [STATUS_SCRIPT, '--board', boardPath, '--out', outPath, '--head', docs, '--version', '1.004'],
-      { cwd: repo, encoding: 'utf8' },
+      { cwd: repo, encoding: 'utf8', env: isolatedGitEnv() },
     );
     expect((JSON.parse(readFileSync(outPath, 'utf8')) as { version: string }).version).toBe('1.004');
   });
@@ -180,7 +186,7 @@ describe('scripts/buildStatus.mjs (docs/17 row 250)', () => {
       execFileSync(
         'node',
         [STATUS_SCRIPT, '--board', join(repo, 'absent-board.md'), '--out', outPath],
-        { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+        { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: isolatedGitEnv() },
       );
     } catch (error) {
       exitCode = (error as { status?: number }).status ?? -1;
