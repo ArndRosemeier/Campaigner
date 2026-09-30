@@ -17,10 +17,10 @@ import { fallbackReasonWords } from '@/llm/openrouterErrors';
  * otherwise look frozen for minutes.
  *
  * PAUSED is named, never hidden: the stream watchdog's clock deliberately
- * credits time the page spent suspended (`lib/pageLiveness`), so while the
- * browser reports this tab as hidden the limits do not advance. The owner
- * works through a remote screen, where a visible-looking window can be
- * reported hidden — the entry says so, so a "stuck" call is diagnosable.
+ * credits time the page spent FROZEN (`lib/pageLiveness`), so while the
+ * browser has frozen this tab the limits do not advance. A merely HIDDEN tab
+ * no longer pauses them (docs/17 row 415 — the owner's remote screen can
+ * report a tab he is looking at as hidden, and a dead call then hung).
  */
 export interface StreamDetailReporter {
   onToken: (delta: string) => void;
@@ -32,7 +32,7 @@ export interface StreamDetailReporter {
 
 /** The paused wording — exported so the pins read the one literal. */
 export const STREAM_PAUSED_DETAIL =
-  'paused — the browser reports this tab as hidden; time limits resume when it is visible';
+  'paused — the browser froze this tab; time limits resume when it runs again';
 
 export function streamDetailReporter(jobId: string, baseDetail: string): StreamDetailReporter {
   let base = baseDetail;

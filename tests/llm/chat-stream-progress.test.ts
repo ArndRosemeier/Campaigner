@@ -208,7 +208,7 @@ describe('(b) the ONE stream reporter', () => {
       reporter.onActivity({ elapsedMs: 12_000, receivedChars: 0, phase: 'thinking' });
     });
     expect(detail).toBe(`Base — ${STREAM_PAUSED_DETAIL} (12s of active time so far).`);
-    expect(STREAM_PAUSED_DETAIL).toContain('the browser reports this tab as hidden');
+    expect(STREAM_PAUSED_DETAIL).toContain('the browser froze this tab');
   });
 
   it('keeps the module forge wording byte-identical (thinking / waiting / chars)', () => {

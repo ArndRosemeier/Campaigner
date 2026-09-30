@@ -19,9 +19,15 @@
  * counts in full) — see `tests/llm/openrouter-watchdog-gap.test.ts`.
  *
  * What counts as a suspension, and why each event:
- * - `visibilitychange` → hidden: Chromium throttles timers in a hidden tab
- *   (1/minute under intensive throttling after ~5 minutes) — the page is not
- *   watching its own clocks;
+ * - NOT `visibilitychange` → hidden (docs/17 row 415, owner decision): a
+ *   hidden tab is THROTTLED, not stopped — its timers tick at most once a
+ *   minute, but network data still arrives and the stream records it, so the
+ *   watchdog's silence measurement stays true and only its check is late.
+ *   Crediting hidden time froze every limit while the tab was hidden, and the
+ *   owner's remote screen can report a tab he is looking at as hidden: a dead
+ *   call then hung for 20+ minutes with no error. Hidden → visible still
+ *   notifies the resume listeners (the wake lock is dropped with the tab
+ *   hidden; the app shell refreshes its title) — it just credits no time;
  * - `freeze` / `resume` (Page Lifecycle API): the tab was actually frozen
  *   (Chromium's desktop freeze criteria) and its timers stopped entirely;
  * - `pagehide` / `pageshow`: a page entering and returning from the
@@ -56,9 +62,9 @@ let suspended = false;
 const resumeListeners = new Set<() => void>();
 
 /**
- * True while the page believes it is suspended (hidden, frozen or in the
- * back/forward cache). Exposed for tests and for callers that want to say so;
- * no correctness path branches on it.
+ * True while the page is suspended (frozen or in the back/forward cache — NOT
+ * merely hidden, docs/17 row 415). Exposed for tests and for callers that want
+ * to say so; no correctness path branches on it.
  */
 export function isPageSuspended(): boolean {
   return suspended;
@@ -85,6 +91,10 @@ export function notePageResumed(now: number = Date.now()): void {
   // pushes, and it pushes exactly one while `suspended` holds).
   const last = gaps[gaps.length - 1];
   if (last !== undefined) last.end = now;
+  notifyResumed();
+}
+
+function notifyResumed(): void {
   for (const listener of resumeListeners) listener();
 }
 
@@ -141,9 +151,19 @@ type LivenessDocument = Pick<
  * this call added.
  */
 export function installPageLiveness(target: LivenessDocument): () => void {
+  // Hidden is tracked for the resume NOTIFICATION only; it opens no gap.
+  let wasHidden = target.hidden;
   const onVisibility = (): void => {
-    if (target.hidden) notePageSuspended();
-    else notePageResumed();
+    if (target.hidden) {
+      wasHidden = true;
+      return;
+    }
+    if (!wasHidden) return;
+    wasHidden = false;
+    // A frozen tab that is shown again closes its gap here (and notifies);
+    // a tab that was only hidden just notifies.
+    if (suspended) notePageResumed();
+    else notifyResumed();
   };
   const onFreeze = (): void => {
     notePageSuspended();
