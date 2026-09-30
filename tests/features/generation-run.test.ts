@@ -22,6 +22,7 @@ import {
 } from '@/domain';
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
 import { generationRunActive, runGenerationSelection } from '@/features/modules/generation-run';
+import type { GenerationOverwriteScope } from '@/features/modules/generation-selection';
 import { useProgressStore } from '@/lib/progress';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
 import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
@@ -215,6 +216,14 @@ function makeBatchWriteArtifacts(campaignId: string, moduleId: string): void {
   );
 }
 
+/** Every overwrite lane on — docs/17 row 422's single switch, now four choices. */
+const ALL_LANES: GenerationOverwriteScope = {
+  details: true,
+  images: true,
+  battlemaps: true,
+  mobPortraits: true,
+};
+
 async function run(
   campaign: Campaign,
   module: Module,
@@ -223,7 +232,7 @@ async function run(
     imageKinds?: EntityKind[];
     battlemaps?: boolean;
     mobPortraits?: boolean;
-    overwrite?: boolean;
+    overwrite?: GenerationOverwriteScope;
   },
 ) {
   return runGenerationSelection({
@@ -526,7 +535,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       },
     );
 
-    const report = await run(campaign, module, { kinds: ['npc'], overwrite: true });
+    const report = await run(campaign, module, { kinds: ['npc'], overwrite: ALL_LANES });
 
     expect(runEntityBatchMock).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'npc', targets: [{ name: 'Kael', artifactId: kael.id }] }),
@@ -629,7 +638,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       imageKinds: ['npc'],
       battlemaps: true,
       mobPortraits: true,
-      overwrite: true,
+      overwrite: ALL_LANES,
     });
 
     // The encounter is NOT an entity-batch target: it is regenerated through the
@@ -686,7 +695,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       return Promise.reject(new Error('Repopulate ended cancelled'));
     });
 
-    const report = await run(campaign, module, { kinds: ['encounter'], overwrite: true });
+    const report = await run(campaign, module, { kinds: ['encounter'], overwrite: ALL_LANES });
 
     expect(changeArtifactMock).toHaveBeenCalledTimes(1);
     expect(report.stopped).toBe(true);

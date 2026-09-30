@@ -13,8 +13,10 @@ import {
 import {
   GENERATION_KINDS,
   generationKindLabel,
+  NO_OVERWRITE_LANES,
   selectGenerationTargets,
   selectLevelNames,
+  type GenerationOverwriteScope,
 } from '@/features/modules/generation-selection';
 import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 
@@ -416,9 +418,16 @@ describe('the dialog vocabulary', () => {
  * already exists and reports it separately (the dialog names it before anything
  * runs); with it off, nothing changes.
  */
-describe('the overwrite box (docs/17 row 422)', () => {
+describe('the overwrite lanes (docs/17 rows 422/429)', () => {
   const COVER = '00000000-0000-4000-8000-00000000c0de';
   const MAP = '00000000-0000-4000-8000-0000000000aa';
+  /** Every lane on — row 422's single switch, now expressed as four choices. */
+  const ALL_LANES: GenerationOverwriteScope = {
+    details: true,
+    images: true,
+    battlemaps: true,
+    mobPortraits: true,
+  };
 
   /** The harbor module plus one encounter, and a world where most of it exists. */
   function world(): { module: Module; artifacts: AnyArtifact[] } {
@@ -483,7 +492,7 @@ describe('the overwrite box (docs/17 row 422)', () => {
 
   /** Ids are minted per call, so every comparison reads ONE world. */
   const fixed = world();
-  const pick = (overwrite?: boolean) => {
+  const pick = (overwrite?: GenerationOverwriteScope) => {
     const { module, artifacts } = fixed;
     return selectGenerationTargets({
       module,
@@ -496,9 +505,9 @@ describe('the overwrite box (docs/17 row 422)', () => {
     });
   };
 
-  it('OFF (absent or false) leaves the selection exactly as it was and replaces nothing', () => {
+  it('OFF (absent, or every lane false) leaves the selection exactly as it was and replaces nothing', () => {
     const absent = pick();
-    const off = pick(false);
+    const off = pick(NO_OVERWRITE_LANES);
     expect(off).toEqual(absent);
     expect(off.overwrites).toEqual({ details: [], images: [], maps: [], mobPortraits: [], kept: [] });
     // The additive run still sees only the missing work.
@@ -508,8 +517,8 @@ describe('the overwrite box (docs/17 row 422)', () => {
   });
 
   it('ON covers every selected name that already exists, reported per kind of work', () => {
-    const off = pick(false);
-    const on = pick(true);
+    const off = pick(NO_OVERWRITE_LANES);
+    const on = pick(ALL_LANES);
     const { artifacts } = fixed;
     const idOf = (name: string) => artifacts.find((artifact) => artifact.name === name)?.id;
 
@@ -552,7 +561,7 @@ describe('the overwrite box (docs/17 row 422)', () => {
         ? { ...artifact, imageIds: [], data: { ...artifact.data, layout: null, mapImageId: null } }
         : artifact,
     );
-    const select = (overwrite: boolean) =>
+    const select = (overwrite: GenerationOverwriteScope) =>
       selectGenerationTargets({
         module,
         artifacts: unmapped,
@@ -562,8 +571,10 @@ describe('the overwrite box (docs/17 row 422)', () => {
         encounterExtras: { battlemaps: true, mobPortraits: false },
         overwrite,
       });
-    const off = select(false);
-    const on = select(true);
+    const off = select(NO_OVERWRITE_LANES);
+    // A FOCUSED scope: this pin is about the detail→map exclusion, so only the
+    // lanes it is about are on (the images/portrait lanes have their own pins).
+    const on = select({ ...NO_OVERWRITE_LANES, details: true, battlemaps: true });
     const encounterId = unmapped.find((artifact) => artifact.kind === 'encounter')?.id;
     expect(off.maps.map((target) => target.artifactId)).toEqual([encounterId]);
     expect(on.overwrites.details.map((target) => target.artifactId)).toContain(encounterId);
@@ -585,26 +596,53 @@ describe('the overwrite box (docs/17 row 422)', () => {
       imageKinds: [],
       levelRange: { min: 1, max: 3 },
       encounterExtras: { battlemaps: true, mobPortraits: false },
-      overwrite: true,
+      overwrite: { ...NO_OVERWRITE_LANES, details: true, battlemaps: true },
     });
     expect(heldOn.overwrites.details.map((target) => target.name)).not.toContain('Ash Fight');
     expect(heldOn.overwrites.maps.map((target) => target.name)).toEqual(['Ash Fight']);
   });
 
-  it('an unticked extra replaces nothing of its kind', () => {
+  it('the IMAGES lane alone replaces every existing cover and touches nothing else (the owner’s case)', () => {
+    const off = pick(NO_OVERWRITE_LANES);
+    const imagesOnly = pick({ ...NO_OVERWRITE_LANES, images: true });
+    // Nothing but the covers: no detail is regenerated, nothing is held back,
+    // no map and no portrait is replaced.
+    expect(imagesOnly.overwrites.details).toEqual([]);
+    expect(imagesOnly.overwrites.kept).toEqual([]);
+    expect(imagesOnly.overwrites.maps).toEqual([]);
+    expect(imagesOnly.overwrites.mobPortraits).toEqual([]);
+    expect(imagesOnly.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
+    // AND THE RUN IS NOT EMPTY — the dialog's Generate greys on `totalCount === 0`,
+    // which is exactly the grey button the owner reported ("button is grey until i
+    // select a kind"). One replaced cover is a complete answer.
+    expect(imagesOnly.totalCount).toBe(off.totalCount + 1);
+  });
+
+  it('the lanes never read the additive controls — not imageKinds, not the extras (docs/17 row 429)', () => {
     const { module, artifacts } = fixed;
-    const on = selectGenerationTargets({
-      module,
-      artifacts,
-      kinds: ['npc', 'location', 'encounter'],
-      imageKinds: [],
-      levelRange: { min: 1, max: 3 },
-      encounterExtras: { battlemaps: false, mobPortraits: false },
-      overwrite: true,
-    });
-    expect(on.overwrites.images).toEqual([]);
-    expect(on.overwrites.maps).toEqual([]);
-    expect(on.overwrites.mobPortraits).toEqual([]);
-    expect(on.overwrites.details).toHaveLength(3);
+    const lanesOnly = (overwrite: GenerationOverwriteScope) =>
+      selectGenerationTargets({
+        module,
+        artifacts,
+        kinds: ['npc', 'location', 'encounter'],
+        // The additive preference is EMPTY and both extras are OFF…
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+        overwrite,
+      });
+    // …and every lane still replaces its own existing work: the images lane
+    // reads the selected kinds, the map/portrait lanes read their own flags.
+    const all = lanesOnly(ALL_LANES);
+    expect(all.images).toEqual([]);
+    expect(all.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
+    expect(all.overwrites.details).toHaveLength(3);
+    expect(all.overwrites.mobPortraits.map((target) => target.name)).toEqual(['Ash Fight']);
+    // The mirror: an OFF lane replaces nothing of its kind, whatever is ticked above.
+    const imagesOnly = lanesOnly({ ...NO_OVERWRITE_LANES, images: true });
+    expect(imagesOnly.overwrites.details).toEqual([]);
+    expect(imagesOnly.overwrites.maps).toEqual([]);
+    expect(imagesOnly.overwrites.mobPortraits).toEqual([]);
+    expect(imagesOnly.overwrites.images).toHaveLength(1);
   });
 });

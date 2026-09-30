@@ -315,6 +315,20 @@ missing artifact, so a name whose detail failed is reported by the batch and nev
 `imageJobs` / `mapJobs` / `portraitJobs` are those actual counts. A ticked kind that enqueued NOTHING is
 NAMED in the run's summary with its reason.
 
+**THE OVERWRITE HAS FOUR INDEPENDENT LANES (docs/17 rows 422/430).** The seam's `overwrite` is a
+`GenerationOverwriteScope` — `{ details, images, battlemaps, mobPortraits }`, every lane off by default and
+never remembered — and the dialog renders it as four checkboxes under "Existing work — overwrite, off
+unless ticked". Each lane adds ONLY its own existing work to `overwrites`, so ticking Images alone
+replaces every existing cover and regenerates not one detail. **A lane reads the overwrite's OWN scope,
+never an additive control:** the images lane replaces every existing cover of the SELECTED KINDS
+(`input.kinds` — NOT the additive `imageKinds` preference, which answers "should this kind GET an image",
+a different question from "replace the image that is there"), and the map/portrait lanes read their own
+flags rather than the Encounter-extras boxes. That is the owner's report fixed, verbatim: *"if i just want
+to overwrite all the images i can not do that, button is grey until i select a kind. Which would be wrong
+since i only want to redo images."* Before the lanes, unticking Kinds to spare the details emptied the
+image lane too (it was `kinds ∩ imageKinds`), so nothing was selected and Generate stayed grey — and
+ticking a kind to un-grey it dragged the detail regeneration back in.
+
 **THERE IS NO GLOBAL IMAGE SWITCH (docs/17 row 406).** `Settings.imagesEnabled` is deleted — asking for
 an image IS the intent, and a switch that was off by default is what made the owner's "generate
 everything, including images" silently do nothing. The image MODEL choice stays (`Settings.imageModel`).

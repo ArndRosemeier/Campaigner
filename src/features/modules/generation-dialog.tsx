@@ -41,11 +41,14 @@ import { patchModule } from '@/db/moduleRepo';
 import {
   GENERATION_KINDS,
   generationKindLabel,
+  NO_OVERWRITE_LANES,
   overwriteJobCount,
+  overwriteScopeActive,
   redrawnByDetail,
   selectGenerationTargets,
   type GenerationKind,
   type GenerationLevelRange,
+  type GenerationOverwriteScope,
   type GenerationOverwrites,
 } from '@/features/modules/generation-selection';
 import { namesAwaitingGate } from '@/features/modules/entity-gate';
@@ -103,6 +106,37 @@ const DEFAULT_KINDS: readonly GenerationKind[] = ENTITY_KINDS;
 /** "Level 3" / "Premise (no level yet)". */
 function levelLabel(level: number): string {
   return level === MODULE_PREMISE_LEVEL ? 'Premise (no level yet)' : `Level ${String(level)}`;
+}
+
+/**
+ * The overwrite's four LANES (docs/17 row 429) — ONE independent choice per kind
+ * of work, in the order the scope statement counts them. The owner's felt
+ * problem: *"if i just want to overwrite all the images i can not do that,
+ * button is grey until i select a kind. Which would be wrong since i only want
+ * to redo images."* Ticking IMAGES alone is now a complete answer.
+ */
+const OVERWRITE_LANES: readonly { id: keyof GenerationOverwriteScope; label: string }[] = [
+  { id: 'details', label: 'Details — regenerate the selected kinds’ text in place' },
+  { id: 'images', label: 'Images — replace every existing cover of the selected kinds' },
+  { id: 'battlemaps', label: 'Battlemaps — redraw the selected encounters’ maps' },
+  {
+    id: 'mobPortraits',
+    label: 'Mob portraits — regenerate the selected encounters’ portraits',
+  },
+];
+
+/** "details, images" — the lanes the overwrite was asked for, for the scope line. */
+function overwriteLaneLine(scope: GenerationOverwriteScope): string {
+  const parts = [
+    [scope.details, 'details'],
+    [scope.images, 'images'],
+    [scope.battlemaps, 'battlemaps'],
+    [scope.mobPortraits, 'mob portraits'],
+  ] as const;
+  return parts
+    .filter(([on]) => on)
+    .map(([, label]) => label)
+    .join(', ');
 }
 
 /** "3 details, 1 image" — the overwrite counts per kind of work, zeros left out. */
@@ -163,9 +197,12 @@ export function GenerationDialog({
   });
   const [battlemaps, setBattlemaps] = useState(false);
   const [mobPortraits, setMobPortraits] = useState(false);
-  // The overwrite box (docs/17 row 422): OFF unless ticked, never remembered —
-  // replacing existing work is a choice made for ONE run.
-  const [overwrite, setOverwrite] = useState(false);
+  // The overwrite LANES (docs/17 rows 422/429): every lane OFF unless ticked,
+  // never remembered — replacing existing work is a choice made for ONE run.
+  // The lanes are INDEPENDENT, so "redo only the images" is one tick and never
+  // drags the details in with it.
+  const [overwrite, setOverwrite] = useState<GenerationOverwriteScope>(NO_OVERWRITE_LANES);
+  const overwriteActive = overwriteScopeActive(overwrite);
   // A run for this module is in progress while its dock entry exists (docs/17
   // row 419) — the dialog closes at once, so this is what a reopened dialog
   // reads, never a flag that died with the last one.
@@ -447,20 +484,32 @@ export function GenerationDialog({
             </fieldset>
 
             <fieldset className="flex flex-col gap-1.5">
-              <legend className="pb-1 text-sm font-medium">Existing work (off unless ticked)</legend>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="generation-overwrite"
-                  data-testid="generation-overwrite"
-                  checked={overwrite}
-                  onCheckedChange={(checked) => {
-                    setOverwrite(checked);
-                  }}
-                />
-                <Label htmlFor="generation-overwrite" className="text-sm">
-                  Overwrite existing — regenerate the selected details, images, battlemaps and mob
-                  portraits that already exist
-                </Label>
+              <legend className="pb-1 text-sm font-medium">
+                Existing work — overwrite, off unless ticked
+              </legend>
+              <div className="flex flex-col gap-1.5">
+                {/*
+                  ONE LANE PER KIND OF WORK (docs/17 row 429). Ticking IMAGES alone
+                  replaces every existing cover of the selected kinds: the lane is
+                  its own scope, so it needs neither an "also generate an image
+                  for" kind ticked nor the Kinds boxes emptied to spare the
+                  details — the two couplings that made it impossible to ask.
+                */}
+                {OVERWRITE_LANES.map((lane) => (
+                  <div key={lane.id} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`generation-overwrite-${lane.id}`}
+                      data-testid={`generation-overwrite-${lane.id}`}
+                      checked={overwrite[lane.id]}
+                      onCheckedChange={(checked) => {
+                        setOverwrite((current) => ({ ...current, [lane.id]: checked }));
+                      }}
+                    />
+                    <Label htmlFor={`generation-overwrite-${lane.id}`} className="text-sm">
+                      {lane.label}
+                    </Label>
+                  </div>
+                ))}
               </div>
               <p className="text-xs text-muted-foreground">
                 For comparing models: text is regenerated in place (the old text stays restorable
@@ -545,11 +594,11 @@ export function GenerationDialog({
               <p className="mt-1" data-testid="generation-scope-count">
                 {`${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'} — ${String(plannedDetails)} detail${plannedDetails === 1 ? '' : 's'}, ${String(plannedImages)} image${plannedImages === 1 ? '' : 's'}, ${String(plannedMaps)} battlemap${plannedMaps === 1 ? '' : 's'}, ${String(plannedPortraits)} mob portrait${plannedPortraits === 1 ? '' : 's'}`}
               </p>
-              {overwrite && (
+              {overwriteActive && (
                 <p className="mt-1" data-testid="generation-scope-overwrite">
                   {replacing === 0
-                    ? 'Overwrite: nothing selected exists yet — nothing is replaced.'
-                    : `Overwrite: ${overwriteCountLine(overwrites)} already exist${replacing === 1 ? 's' : ''} and will be replaced.`}
+                    ? `Overwrite (${overwriteLaneLine(overwrite)}): nothing of that exists yet — nothing is replaced.`
+                    : `Overwrite (${overwriteLaneLine(overwrite)}): ${overwriteCountLine(overwrites)} already exist${replacing === 1 ? 's' : ''} and will be replaced.`}
                 </p>
               )}
               {selection.levels.length > 0 && (

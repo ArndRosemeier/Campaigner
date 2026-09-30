@@ -17,6 +17,7 @@ import {
   reportEntityBatchNotices,
 } from '@/features/modules/entity-batch-report';
 import {
+  NO_OVERWRITE_LANES,
   redrawnByDetail,
   selectGenerationTargets,
   selectedNameResolves,
@@ -24,6 +25,7 @@ import {
   type GenerationKind,
   type GenerationLevelRange,
   type GenerationEncounterTarget,
+  type GenerationOverwriteScope,
   type GenerationOverwriteTarget,
   type GenerationSelection,
   type GenerationTarget,
@@ -111,8 +113,11 @@ export interface GenerationRunInput {
   imageKinds: readonly EntityKind[];
   levelRange: GenerationLevelRange;
   encounterExtras: EncounterExtras;
-  /** The dialog's overwrite box (docs/17 row 422); absent = off (additive). */
-  overwrite?: boolean;
+  /**
+   * The dialog's overwrite LANES (docs/17 rows 422/429); absent or all-false =
+   * off (the additive run). Passed through to the ONE selection seam unchanged.
+   */
+  overwrite?: GenerationOverwriteScope;
 }
 
 /** What one run did (the dialog reports it; the queues carry their own progress). */
@@ -183,7 +188,10 @@ export async function runGenerationSelection(
   input: GenerationRunInput,
 ): Promise<GenerationRunReport> {
   const { module, artifacts, kinds, imageKinds, levelRange, encounterExtras } = input;
-  const overwrite = input.overwrite === true;
+  // Normalized to an all-false scope, never `undefined`: the seam's optional
+  // property is exact (exactOptionalPropertyTypes), and "no lanes ticked" and
+  // "no overwrite argument" are the same run.
+  const overwrite = input.overwrite ?? NO_OVERWRITE_LANES;
   const selection = selectGenerationTargets({
     module,
     artifacts,
@@ -246,7 +254,10 @@ async function runSelectionUnlocked(
   gateFirst: boolean,
 ): Promise<GenerationRunReport> {
   const { campaign, kinds, imageKinds, levelRange, encounterExtras } = input;
-  const overwrite = input.overwrite === true;
+  // Normalized to an all-false scope, never `undefined`: the seam's optional
+  // property is exact (exactOptionalPropertyTypes), and "no lanes ticked" and
+  // "no overwrite argument" are the same run.
+  const overwrite = input.overwrite ?? NO_OVERWRITE_LANES;
   let { module } = input;
   let selection = planned;
   try {
