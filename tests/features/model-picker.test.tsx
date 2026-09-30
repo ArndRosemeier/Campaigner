@@ -10,7 +10,7 @@ import { ROUTES, workspacePath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { readSettings, saveSettings } from '@/db/settingsRepo';
 import { defaultSettings, type Settings } from '@/domain';
-import { listModels } from '@/llm/openrouter';
+import { listImageModels, listModels } from '@/llm/openrouter';
 import type * as OpenRouterModule from '@/llm/openrouter';
 import { toastError } from '@/lib/toast';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
@@ -26,7 +26,7 @@ import { clearDatabase } from '../db/helpers';
 
 vi.mock('@/llm/openrouter', async (importOriginal) => {
   const actual = await importOriginal<typeof OpenRouterModule>();
-  return { ...actual, listModels: vi.fn() };
+  return { ...actual, listModels: vi.fn(), listImageModels: vi.fn() };
 });
 
 vi.mock('@/lib/toast', () => ({
@@ -37,6 +37,7 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 const listModelsMock = vi.mocked(listModels);
+const listImageModelsMock = vi.mocked(listImageModels);
 const toastErrorMock = vi.mocked(toastError);
 
 /** A settled install (no first-run wizard) with optional settings overrides. */
@@ -63,6 +64,7 @@ async function readSettled(): Promise<Settings> {
 beforeEach(async () => {
   await clearDatabase();
   listModelsMock.mockReset();
+  listImageModelsMock.mockReset();
   toastErrorMock.mockReset();
 });
 
@@ -207,5 +209,36 @@ describe('the top-bar model picker (docs/17 row 193)', () => {
       '401 Unauthorized',
     );
     expect(toastErrorMock).toHaveBeenCalled();
+  });
+});
+
+describe('the top-bar IMAGE model picker (docs/17 row 420)', () => {
+  it('sits beside the chat picker, lists image models only, writes settings.imageModel and records no chat recent', async () => {
+    await seedSettings({
+      openRouterApiKey: 'test-key',
+      imageModel: 'old/image',
+      recentChatModels: ['a/first'],
+    });
+    listImageModelsMock.mockResolvedValue(['new/image', 'other/image']);
+
+    renderAppAt(ROUTES.campaignPicker);
+    const user = userEvent.setup();
+    const chat = await screen.findByTestId('model-picker-trigger');
+    const image = await screen.findByTestId('image-model-picker-trigger');
+    expect(image).toHaveTextContent('old/image');
+    expect(image).toHaveAccessibleName('Image model: old/image');
+    expect(chat.compareDocumentPosition(image) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(image);
+    await user.click(await screen.findByText('new/image'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('image-model-picker-trigger')).toHaveTextContent('new/image');
+    });
+    const after = await readSettled();
+    expect(after.imageModel).toBe('new/image');
+    expect(after.recentChatModels).toEqual(['a/first']);
+    expect(listModelsMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
   });
 });

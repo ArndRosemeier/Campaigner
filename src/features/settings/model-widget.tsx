@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { CheckIcon, ChevronsUpDownIcon, HistoryIcon, SparklesIcon } from 'lucide-react';
+import { CheckIcon, ChevronsUpDownIcon, HistoryIcon, type LucideIcon } from 'lucide-react';
 
 import { buttonVariants } from '@/components/ui/button';
 import {
@@ -89,6 +89,12 @@ interface ModelFieldVariant extends ModelWidgetBase {
 
 interface ModelTriggerVariant extends ModelWidgetBase {
   variant: 'trigger';
+  /** What the trigger picks, for its accessible name ("Chat model: <id>"). The
+   * top bar carries two (chat and image, docs/17 row 420), so it is the
+   * caller's, never assumed. */
+  label: string;
+  icon: LucideIcon;
+  testId: string;
 }
 
 export type ModelWidgetProps = ModelFieldVariant | ModelTriggerVariant;
@@ -258,12 +264,12 @@ export function ModelWidget(props: ModelWidgetProps): JSX.Element {
     return (
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
-          data-testid="model-picker-trigger"
-          aria-label={`Chat model: ${props.value}`}
-          title={props.value}
+          data-testid={props.testId}
+          aria-label={`${props.label}: ${props.value}`}
+          title={`${props.label}: ${props.value}`}
           className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'max-w-52')}
         >
-          <SparklesIcon aria-hidden data-icon="inline-start" className="shrink-0" />
+          <props.icon aria-hidden data-icon="inline-start" className="shrink-0" />
           <span className="min-w-0 truncate">{props.value}</span>
           <ChevronsUpDownIcon aria-hidden data-icon="inline-end" className="shrink-0 opacity-60" />
         </PopoverTrigger>

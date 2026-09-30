@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { SparklesIcon } from 'lucide-react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readSettings, saveSettings } from '@/db/settingsRepo';
@@ -67,7 +68,9 @@ function renderWidget(variant: Variant, overrides: WidgetOverrides = {}): void {
     );
     return;
   }
-  render(<ModelWidget variant="trigger" {...common} />);
+  render(
+    <ModelWidget variant="trigger" label="Chat model" icon={SparklesIcon} testId="model-picker-trigger" {...common} />,
+  );
 }
 
 function openPanel(user: ReturnType<typeof userEvent.setup>): Promise<void> {

@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowRightIcon } from 'lucide-react';
+import { ArrowRightIcon, ImageIcon, SparklesIcon } from 'lucide-react';
 
 import { CampaignSwitcher } from '@/app/layout/CampaignSwitcher';
 import { BuildStatusBadge } from '@/app/layout/BuildStatusBadge';
@@ -12,6 +12,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { ModelWidget } from '@/features/settings/model-widget';
+import { listImageModels } from '@/llm/openrouter';
 import { TopBarDocumentButton } from '@/features/modules/top-bar-document-button';
 import { QuickFindTopBarButton } from '@/features/quickfind/quickfind-topbar-button';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
@@ -80,10 +81,27 @@ export function TopBar(): JSX.Element {
             field renders. */}
         <ModelWidget
           variant="trigger"
+          label="Chat model"
+          icon={SparklesIcon}
+          testId="model-picker-trigger"
           value={settings?.defaultChatModel ?? ''}
           canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
           recentModels={settings?.recentChatModels ?? []}
           onChange={(value) => updateSettings({ defaultChatModel: value })}
+        />
+        {/* The GLOBAL image model beside it (docs/17 row 420): the SAME widget
+            over the SAME `settings.imageModel` the Settings page edits, listing
+            the account's image models only. No recents — that list means "the
+            global CHAT model was in play" (row 199). */}
+        <ModelWidget
+          variant="trigger"
+          label="Image model"
+          icon={ImageIcon}
+          testId="image-model-picker-trigger"
+          value={settings?.imageModel ?? ''}
+          canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
+          fetchOptions={listImageModels}
+          onChange={(value) => updateSettings({ imageModel: value })}
         />
         {lastModule !== null && (
           <NavLink
