@@ -47,10 +47,15 @@ describe('one cast-write rule (SOURCE SCAN, docs/17 row 284)', () => {
     // entity batch's destination check. A new file here is a new enforcement
     // point that must be declared, and a new site INSIDE an existing file is
     // visible in the file's own use count below.
+    // docs/17 row 422: the generation overwrite's SELECTION asks the same rule
+    // up front, so a cast library creature it would not rewrite is listed as
+    // KEPT (named in the dialog) instead of failing inside the batch after the
+    // run — the question is the seam's, asked earlier, never re-spelled.
     expect(filesWith('castCreatureWritePermitted(')).toEqual([
       SEAM,
       'src/features/modules/change-artifact.ts',
       'src/features/modules/entity-batch.ts',
+      'src/features/modules/generation-selection.ts',
       ENGINE,
     ]);
     // THREE asks in the engine: the statblock step's boundary, the refill

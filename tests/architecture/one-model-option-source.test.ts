@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -52,7 +52,9 @@ const LIST_MODELS_ALLOWLIST: Record<string, number> = {
  * mount anywhere reds, and so does a deleted one.
  */
 const WIDGET_MOUNTS: Record<string, number> = {
-  'src/app/layout/TopBar.tsx': 1,
+  // 2 since docs/17 row 420: the global chat model AND the global image model
+  // (the image trigger carries no recents — see RECENTS_MOUNTS below).
+  'src/app/layout/TopBar.tsx': 2,
   'src/features/idea-board/IdeaBoardPage.tsx': 1,
   'src/features/modules/canvas/ChatSidebar.tsx': 2,
   'src/features/onboarding/SetupWizardDialog.tsx': 1,
@@ -98,9 +100,15 @@ function countsOf(needle: string): Map<string, number> {
   for (const file of sourceFiles(SRC_DIR)) {
     const text = stripComments(readFileSync(file, 'utf8'));
     const hits = text.split(needle).length - 1;
-    if (hits > 0) counts.set(relative(process.cwd(), file), hits);
+    if (hits > 0) counts.set(repoPath(file), hits);
   }
   return counts;
+}
+
+/** Repo-relative, always with `/` — the pins name paths that way, and a
+ * Windows checkout's `\` must not make them unreadable there (docs/17 row 424). */
+function repoPath(file: string): string {
+  return relative(process.cwd(), file).split(sep).join('/');
 }
 
 function sorted(map: Map<string, number> | Record<string, number>): [string, number][] {
@@ -127,7 +135,7 @@ describe('one model-picking widget and one account model-id source (SOURCE SCAN,
   });
 
   it('is the ONE model-picking component, with its whole mount population named by file', () => {
-    const files = sourceFiles(SRC_DIR).map((file) => relative(process.cwd(), file));
+    const files = sourceFiles(SRC_DIR).map(repoPath);
 
     // The superseded components are GONE, not wrapped.
     for (const deleted of DELETED_COMPONENTS) {
