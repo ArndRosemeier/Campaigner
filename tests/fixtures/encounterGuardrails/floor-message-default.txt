@@ -1,0 +1,1 @@
+Encounter floor not met: the module needs 2 distinct named encounters for its level range but the document names 0. Deficient parts: "The Sunken Quarter" (band 1): needs 1, names 0; "The Drowned Cathedral" (band 2): needs 1, names 0.

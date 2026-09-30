@@ -1,0 +1,214 @@
+/**
+ * Single source of truth for every route in the app (05-UI.md §Routes).
+ *
+ * Route *patterns* (with `:param` segments) are used by the router in
+ * `app/router.tsx`; the `*Path()` builders below are used everywhere else
+ * (links, navigation) so path strings are never hand-written twice.
+ */
+import { matchPath } from 'react-router-dom';
+
+export const ROUTES = {
+  /** Campaign picker (list + create). */
+  campaignPicker: '/',
+  /** Workspace (three-pane) for a campaign. */
+  workspace: '/c/:campaignId',
+  /** Workspace with a specific artifact open. */
+  artifact: '/c/:campaignId/a/:artifactId',
+  /** Link graph for a campaign (M2). */
+  graph: '/c/:campaignId/graph',
+  /**
+   * Table surface for ONE encounter's live battle (M6-E; re-keyed by encounter,
+   * docs/17 row 254). The module id stays because the board needs its module
+   * (breadcrumb, spawn ownership, `Back to module`); the encounter id is the
+   * battle's IDENTITY — a module may hold several encounters, each with its own
+   * board.
+   */
+  battle: '/c/:campaignId/m/:moduleId/battle/:encounterId',
+  /** Whole-module board for one module (08 §Module board) — the module's
+   * spatial overview. */
+  board: '/c/:campaignId/m/:moduleId/board',
+  /** Document co-authoring canvas for ONE module (whole-module document,
+   * 08 §Module canvas). */
+  canvas: '/c/:campaignId/m/:moduleId/canvas',
+  /**
+   * THE CAMPAIGN'S ONE DOCUMENT (docs/23 §10 phase 2, docs/17 row 389): the
+   * campaign landing. There is no module LIST any more — this route resolves
+   * the campaign's single module row and lands on its document (the reader),
+   * or offers the create state when the campaign has none. It was
+   * `ROUTES.modules`; the plural concept is gone, the ROW survives.
+   */
+  document: '/c/:campaignId/document',
+  /**
+   * Spell list for a campaign (docs/17 row 182): the campaign's own system
+   * decides which imported rules material is shown, because the library is
+   * global and a spell's game system is not.
+   */
+  spells: '/c/:campaignId/spells',
+  /** Module reader for one module (M4). */
+  module: '/c/:campaignId/m/:moduleId',
+  /** Rules library (books list + browser). */
+  rules: '/rules',
+  ideaBoard: '/idea-board',
+  /** Settings page. */
+  settings: '/settings',
+  /** Experiment lab (discreet dev surface, linked from Settings only). */
+  lab: '/lab',
+  /** First-module guide (opened in another tab from the wizard/help/empty states). */
+  guide: '/guide',
+  /** One guide chapter by id. */
+  guideChapter: '/guide/:chapterId',
+} as const satisfies Record<string, `/${string}`>;
+
+/** Route parameters per route pattern, for typed `useParams` calls. */
+export interface RouteParams {
+  workspace: { campaignId: string };
+  artifact: { campaignId: string; artifactId: string };
+}
+
+/** Path of the link-graph screen for a given campaign. */
+export function graphPath(campaignId: string): `/c/${string}/graph` {
+  return `/c/${encodeURIComponent(campaignId)}/graph`;
+}
+
+/**
+ * Path of the table surface for ONE encounter's live battle (M6-E; re-keyed by
+ * encounter, docs/17 row 254). The module id is kept in the path because the
+ * board acts on its module (breadcrumb, spawn ownership, back-link); the
+ * encounter id is what the surface resolves its battle by.
+ */
+export function battlePath(
+  campaignId: string,
+  moduleId: string,
+  encounterId: string,
+): `/c/${string}/m/${string}/battle/${string}` {
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/battle/${encodeURIComponent(encounterId)}`;
+}
+
+/**
+ * Path of the whole-module board for one module (08 §Module board). An
+ * optional node key becomes a `#node-<key>` hash the board centers on.
+ */
+export function boardPath(
+  campaignId: string,
+  moduleId: string,
+  nodeKey?: string,
+): `/c/${string}/m/${string}/board${string}` {
+  const hash = nodeKey === undefined ? '' : `#node-${encodeURIComponent(nodeKey)}`;
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/board${hash}`;
+}
+
+/**
+ * The canvas deep-link scroll target: a part's `planIndex`, or `'premise'`
+ * for a scroll to the top (canvas v3 — `?part=` is a SCROLL target on the
+ * whole-module document, not a scope).
+ */
+export type CanvasPartParam = number | 'premise';
+
+/** Serializes the canvas scroll target for the `?part=` query parameter. */
+export function canvasPartParam(part: CanvasPartParam): string {
+  return part === 'premise' ? 'premise' : String(part);
+}
+
+/**
+ * Path of the whole-module document canvas (08 §Module canvas). An optional
+ * part target becomes a `?part=<planIndex|premise>` query parameter the
+ * page SCROLLS to (the editor doc is the whole module; `#part-<n>` hashes
+ * are honored the same way — the reader's deep-link convention).
+ */
+export function canvasPath(
+  campaignId: string,
+  moduleId: string,
+  part?: CanvasPartParam,
+): `/c/${string}/m/${string}/canvas${string}` {
+  const query =
+    part === undefined ? '' : `?part=${encodeURIComponent(canvasPartParam(part))}`;
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas${query}`;
+}
+
+/**
+ * Path of the whole-module document canvas with the chat sidebar forced
+ * OPEN (08 §Module canvas chat, docs/17 row 57 — the chat is the front
+ * door): the reader header's Chat link routes here, so one click from the
+ * module reader starts talking to the module. It is the reader header's ONLY
+ * canvas-destination entry — the plain-canvas **Canvas** link that used to
+ * stand beside it was retired by owner request (docs/17 row 138), and the
+ * reader nav is Board + Chat + Contents. The modules list row's own Chat
+ * entry to this same path was dropped by owner decision 2026-09-10 (docs/17
+ * row 91, AMENDS 57 — one row icon per destination); the modules list row
+ * itself is DELETED (docs/17 row 389), and the plain `canvasPath`'s remaining
+ * caller is the campaign tree's module group. The page reads `?chat=open` and
+ * opens the sidebar even when the session toggle closed it.
+ */
+export function canvasChatPath(
+  campaignId: string,
+  moduleId: string,
+): `/c/${string}/m/${string}/canvas${string}` {
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas?chat=open`;
+}
+
+/**
+ * Path of the campaign's ONE document (docs/17 row 389) — the campaign
+ * landing. It resolves the campaign's single module row and reaches its
+ * document; a campaign with no row shows the create state there.
+ */
+export function documentPath(campaignId: string): `/c/${string}/document` {
+  return `/c/${encodeURIComponent(campaignId)}/document`;
+}
+
+/** Path of the spell list for a given campaign (docs/17 row 182). */
+export function spellsPath(campaignId: string): `/c/${string}/spells` {
+  return `/c/${encodeURIComponent(campaignId)}/spells`;
+}
+
+/**
+ * Path of the module reader (M4). An optional part index becomes a
+ * `#part-<index>` hash the reader scrolls to (quick-find "select scrolls the
+ * reader").
+ */
+export function modulePath(
+  campaignId: string,
+  moduleId: string,
+  partIndex?: number,
+): `/c/${string}/m/${string}` {
+  const hash = partIndex === undefined ? '' : `#part-${String(partIndex)}`;
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}${hash}`;
+}
+
+/** Path of the workspace screen for a given campaign. */
+export function workspacePath(campaignId: string): `/c/${string}` {
+  return `/c/${encodeURIComponent(campaignId)}`;
+}
+
+/**
+ * Path of the first-module guide (M-onboarding). Without a chapter id the
+ * page renders the first chapter.
+ */
+export function guidePath(chapterId?: string): '/guide' | `/guide/${string}` {
+  return chapterId === undefined
+    ? ROUTES.guide
+    : `${ROUTES.guide}/${encodeURIComponent(chapterId)}`;
+}
+
+/** Path of the workspace screen with a given artifact open. */
+export function artifactPath(campaignId: string, artifactId: string): `/c/${string}/a/${string}` {
+  return `/c/${encodeURIComponent(campaignId)}/a/${encodeURIComponent(artifactId)}`;
+}
+
+/**
+ * The campaignId when `pathname` is a campaign-scoped route (workspace,
+ * artifact, graph), else undefined. For chrome rendered outside the routed
+ * page (top bar), which cannot use `useParams` for child-route params.
+ */
+export function campaignIdFromPath(pathname: string): string | undefined {
+  return (
+    matchPath(ROUTES.artifact, pathname)?.params.campaignId ??
+    matchPath(ROUTES.graph, pathname)?.params.campaignId ??
+    matchPath(ROUTES.battle, pathname)?.params.campaignId ??
+    matchPath(ROUTES.board, pathname)?.params.campaignId ??
+    matchPath(ROUTES.canvas, pathname)?.params.campaignId ??
+    matchPath(ROUTES.document, pathname)?.params.campaignId ??
+    matchPath(ROUTES.spells, pathname)?.params.campaignId ??
+    matchPath(ROUTES.module, pathname)?.params.campaignId ??
+    matchPath(ROUTES.workspace, pathname)?.params.campaignId
+  );
+}

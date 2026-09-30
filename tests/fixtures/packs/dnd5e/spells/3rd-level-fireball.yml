@@ -1,0 +1,150 @@
+# REAL upstream fixture — foundryvtt/dnd5e @ 6.0.x
+# upstream: packs/_source/spells/3rd-level/fireball.yml
+# sha256:   1011e2baf84af360f5c7852e68b52d6a21df98acf23ad721a435c74fa3925f57
+# bytes:    3172
+# fetched:  2026-09-16 (docs/17 row 194, docs/08-TESTING lane digests)
+# Body below this comment is the upstream file VERBATIM. The hash and byte
+# count cover the BODY (these comment lines excluded) and are asserted in
+# tests/ingest/packs/dnd5e-foundry.test.ts.
+_id: ztgcdrWPshKRpFd0
+name: Fireball
+ownership:
+  default: 0
+type: spell
+system:
+  description:
+    value: >-
+      <p>A bright streak flashes from your pointing finger to a point you choose
+      within range and then blossoms with a low roar into an explosion of flame.
+      Each creature in a 20-foot-radius sphere centered on that point must make
+      a Dexterity saving throw. A target takes 8d6 fire damage on a failed save,
+      or half as much damage on a successful one.</p><p>The fire spreads around
+      corners. It ignites flammable objects in the area that aren't being worn
+      or carried.</p><p><strong>At Higher Levels.</strong> When you cast this
+      spell using a spell slot of 4th level or higher, the damage increases by
+      1d6 for each slot level above 3rd.</p>
+    chat: ''
+  source:
+    custom: ''
+    book: ''
+    page: ''
+    license: CC-BY-4.0
+    rules: '2014'
+  activation:
+    type: action
+    condition: ''
+    value: 1
+  duration:
+    value: ''
+    units: inst
+  target:
+    affects:
+      choice: false
+      type: ''
+    template:
+      units: ft
+      type: sphere
+      size: '20'
+      contiguous: false
+      count: ''
+  range:
+    value: '150'
+    units: ft
+    special: ''
+  uses:
+    max: ''
+    recovery: []
+    spent: 0
+  level: 3
+  school: evo
+  materials:
+    value: A tiny ball of bat guano and sulfur
+    consumed: false
+    cost: 0
+    supply: 0
+  preparation:
+    mode: prepared
+    prepared: false
+  properties:
+    - vocal
+    - somatic
+    - material
+  activities:
+    dnd5eactivity000:
+      _id: dnd5eactivity000
+      type: save
+      activation:
+        type: action
+        value: null
+        override: false
+      consumption:
+        targets: []
+        scaling:
+          allowed: false
+          max: ''
+        spellSlot: true
+      description:
+        chatFlavor: ''
+      duration:
+        units: inst
+        concentration: false
+        override: false
+      effects: []
+      range:
+        override: false
+      target:
+        prompt: true
+        template:
+          contiguous: false
+          units: ft
+        affects:
+          choice: false
+        override: false
+      damage:
+        onSave: half
+        parts:
+          - number: 8
+            denomination: 6
+            bonus: ''
+            types:
+              - fire
+            custom:
+              enabled: false
+              formula: ''
+            scaling:
+              mode: whole
+              number: 1
+              formula: ''
+      save:
+        ability: dex
+        dc:
+          calculation: spellcasting
+          formula: ''
+        bonus: ''
+      uses:
+        spent: 0
+        recovery: []
+        max: ''
+      sort: 0
+      name: Cast
+      img: ''
+      visibility:
+        level:
+          min: null
+          max: null
+  identifier: fireball
+sort: 0
+flags: {}
+img: icons/magic/fire/barrier-shield-explosion-yellow.webp
+effects: []
+folder: 5Si35RRLLaaoWvC3
+_stats:
+  duplicateSource: null
+  coreVersion: '14.361'
+  systemId: dnd5e
+  systemVersion: 6.0.0
+  createdTime: 1725037367345
+  modifiedTime: 1781289195602
+  lastModifiedBy: dnd5ebuilder0000
+  exportSource: null
+_key: '!items!ztgcdrWPshKRpFd0'

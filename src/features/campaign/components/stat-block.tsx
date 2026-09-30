@@ -1,0 +1,441 @@
+import { Input } from '@/components/ui/input';
+import { TextBlocks } from '@/components/text-blocks';
+import {
+  abilityModifier,
+  abilityScoreFromModifier,
+  casterStatLine,
+  formatAbilityValue,
+  printsAbilityModifiers,
+  statBlockStatesNoSpellDc,
+  type NamedText,
+  type StatBlock,
+} from '@/domain';
+import {
+  PairListEditor,
+  ExtrasEditor,
+  type PairRow,
+} from '@/features/campaign/components/list-editors';
+import { Field } from '@/features/campaign/components/form-field';
+import { MobSpellChips } from '@/features/spells/mob-spell-chips';
+import { mobLevelText } from '@/llm/encounterRoster';
+
+const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
+const ABILITY_LABELS: Readonly<Record<(typeof ABILITIES)[number], string>> = {
+  str: 'STR',
+  dex: 'DEX',
+  con: 'CON',
+  int: 'INT',
+  wis: 'WIS',
+  cha: 'CHA',
+};
+
+function toNamedTextRows(items: readonly NamedText[]): PairRow[] {
+  return items.map((item) => ({ a: item.name, b: item.text }));
+}
+
+function fromNamedTextRows(rows: readonly PairRow[]): NamedText[] {
+  return rows.map((row) => ({ name: row.a, text: row.b }));
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Input
+        value={value}
+        className="h-7 text-sm"
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+    </Field>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Input
+        type="number"
+        value={Number.isFinite(value) ? value : ''}
+        className="h-7 text-sm"
+        onChange={(event) => {
+          const parsed = Number.parseInt(event.target.value, 10);
+          onChange(Number.isNaN(parsed) ? 0 : parsed);
+        }}
+      />
+    </Field>
+  );
+}
+
+/**
+ * Classic stat-block card display (05-UI §Artifact editor) — THE card every
+ * surface renders (the artifact editor, the session-mode cards, the module
+ * reader's entity panel through `MonsterStatblocksPanel`, the battle table).
+ *
+ * The prose fields it prints (`saves`/`skills`/`senses`/`languages`, every
+ * trait/action/reaction/legendary body and every `extras` value) render through
+ * `components/text-blocks.TextBlocks` — the ONE plain-text→blocks renderer
+ * (docs/17 row 146, docs/18 §2.3): a blank line becomes a paragraph break and a
+ * single newline a line break, so the model's own structure survives instead of
+ * collapsing into the owner's *"walls of text"*. This component splits NOTHING
+ * itself; `tests/lib/text-blocks.test.tsx` fails on a second rule here.
+ */
+export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name: string }) {
+  const headlineParts = [statBlock.size, statBlock.creatureType].filter((part) => part !== '');
+  // THE block's own level, read through the ONE reader (docs/17 row 282) — the
+  // SAME `mobLevelFor`/`mobLevelText` the entity panel's chip and the run
+  // engine's level resolution use, so the card and the chip can never print two
+  // answers for one mob. `undefined` when the block states no readable level, so
+  // an empty or unreadable `level` prints NO level line instead of presenting a
+  // non-level as one (the raw value stays in the stored block and the form).
+  const level = mobLevelText(statBlock.level);
+  // THE caster line (docs/17 row 201): the stated spell DC / attack / tradition,
+  // or the LOUD marker when a caster states no DC. `null` for a mundane or
+  // legacy block, so those render exactly as they did. The bytes come from the
+  // ONE `domain/statblock.casterStatLine`, the SAME ones both PDF boxes print.
+  const casterLine = casterStatLine(statBlock);
+  const spellDcMissing = statBlockStatesNoSpellDc(statBlock);
+
+  return (
+    <div className="rounded-lg border bg-card p-3 text-sm">
+      <div className="border-b pb-1.5">
+        <h3 className="font-serif text-lg font-bold">{name}</h3>
+        {headlineParts.length > 0 && <p className="text-xs italic">{headlineParts.join(' ')}</p>}
+        {level !== undefined && <p className="text-xs">Level {level}</p>}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 border-b py-1.5 text-xs">
+        <div>
+          <span className="font-semibold">AC</span> {statBlock.ac}
+          {statBlock.acNote !== '' && (
+            <span className="text-muted-foreground"> ({statBlock.acNote})</span>
+          )}
+        </div>
+        <div>
+          <span className="font-semibold">HP</span> {statBlock.hp}
+          {statBlock.hpFormula !== '' && (
+            <span className="text-muted-foreground"> ({statBlock.hpFormula})</span>
+          )}
+        </div>
+        <div>
+          <span className="font-semibold">Speed</span> {statBlock.speed || '—'}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-6 gap-1 border-b py-2 text-center text-xs">
+        {ABILITIES.map((ability) => {
+          const score = statBlock.abilities[ability];
+          return (
+            <div key={ability}>
+              <div className="font-semibold">{ABILITY_LABELS[ability]}</div>
+              {/* Per-system display (docs/12 §5): Pathfinder 2e prints the
+                  BONUS only, every other system `score (bonus)`. */}
+              <div>{formatAbilityValue(statBlock.system, score)}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <dl className="py-1.5 text-xs">
+        {[
+          { label: 'Saving Throws', value: statBlock.saves },
+          { label: 'Skills', value: statBlock.skills },
+          { label: 'Senses', value: statBlock.senses },
+          { label: 'Languages', value: statBlock.languages },
+        ]
+          .filter((row) => row.value !== '')
+          .map((row) => (
+            <div key={row.label} className="flex gap-1">
+              <dt className="shrink-0 font-semibold">{row.label}</dt>
+              {/* The shared block rule, not a rule of this component's own: a
+                  field the model wrote in paragraphs renders AS paragraphs
+                  (docs/17 row 146, docs/18 §2.3). */}
+              <dd>
+                <TextBlocks text={row.value} />
+              </dd>
+            </div>
+          ))}
+      </dl>
+
+      {(['traits', 'actions', 'reactions', 'legendary'] as const).map((section) => {
+        const items = statBlock[section];
+        if (items.length === 0) return null;
+        return (
+          <div key={section} className="mt-2">
+            <h4 className="border-b text-xs font-bold tracking-wide uppercase">{section}</h4>
+            <ul className="mt-1 space-y-1 text-xs">
+              {items.map((item, index) => (
+                <li key={index}>
+                  <span className="font-semibold italic">{item.name}.</span>{' '}
+                  <TextBlocks text={item.text} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+
+      {Object.entries(statBlock.extras).length > 0 && (
+        <dl className="mt-2 border-t pt-1.5 text-xs">
+          {Object.entries(statBlock.extras).map(([key, value]) => (
+            <div key={key} className="flex gap-1">
+              <dt className="shrink-0 font-semibold">{key}</dt>
+              <dd>
+                <TextBlocks text={value} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {/* The caster line (docs/17 row 201): the numbers a GM plays the spell
+          from. A caster that states no spell DC is LOUD (destructive styling +
+          the marker text) — never a computed number (AGENTS rule 1). */}
+      {casterLine !== null && (
+        <p
+          className={
+            spellDcMissing
+              ? 'mt-2 rounded-md border border-destructive/50 bg-destructive/5 p-1.5 text-xs font-medium text-destructive'
+              : 'mt-2 text-xs'
+          }
+          data-testid="stat-block-caster"
+          data-state={spellDcMissing ? 'missing-spell-dc' : 'stated'}
+        >
+          {casterLine}
+        </p>
+      )}
+
+      {/* The mob's spells as chips (docs/17 row 184): the AI-authored half of
+          the spells arc. A legacy stat block has no `spells` key at all and
+          renders here exactly as it did — the component is not mounted. */}
+      {statBlock.spells !== null && statBlock.spells !== undefined && statBlock.spells.length > 0 && (
+        <MobSpellChips
+          spells={statBlock.spells}
+          level={statBlock.level}
+          system={statBlock.system}
+          mobName={name}
+        />
+      )}
+    </div>
+  );
+}
+
+export interface StatBlockFormProps {
+  statBlock: StatBlock;
+  onChange: (next: StatBlock) => void;
+}
+
+/**
+ * Edit form for every StatBlock field, mapped 1:1 (05-UI: "plain labeled
+ * inputs").
+ *
+ * ABILITIES follow the block's own SYSTEM (docs/12 §5): the app stores
+ * d20-scale scores everywhere, Pathfinder 2e prints signed modifiers, so for a
+ * PF2e block the field IS the printed bonus and the stored score is derived
+ * with `abilityScoreFromModifier` — stated on screen by the conversion note
+ * below the grid rather than converted behind the owner's back (AGENTS 1),
+ * because a signed value he types (-1) means the same thing here as in the
+ * book. Every other system's field is the stored score, unchanged.
+ */
+export function StatBlockForm({ statBlock, onChange }: StatBlockFormProps) {
+  const editsAbilitiesAsModifiers = printsAbilityModifiers(statBlock.system);
+
+  function patch(next: Partial<StatBlock>): void {
+    onChange({ ...statBlock, ...next });
+  }
+
+  function patchAbility(ability: (typeof ABILITIES)[number], value: number): void {
+    patch({
+      abilities: {
+        ...statBlock.abilities,
+        [ability]: editsAbilitiesAsModifiers ? abilityScoreFromModifier(value) : value,
+      },
+    });
+  }
+
+  function patchNamedList(
+    section: 'traits' | 'actions' | 'reactions' | 'legendary',
+    rows: PairRow[],
+  ): void {
+    patch({ [section]: fromNamedTextRows(rows) });
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
+      <div className="grid grid-cols-2 gap-2">
+        <TextField
+          label="Level"
+          value={statBlock.level}
+          onChange={(level) => {
+            patch({ level });
+          }}
+        />
+        <TextField
+          label="Size"
+          value={statBlock.size}
+          onChange={(size) => {
+            patch({ size });
+          }}
+        />
+        <TextField
+          label="Creature type"
+          value={statBlock.creatureType}
+          onChange={(creatureType) => {
+            patch({ creatureType });
+          }}
+        />
+        <TextField
+          label="Speed"
+          value={statBlock.speed}
+          onChange={(speed) => {
+            patch({ speed });
+          }}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="AC"
+          value={statBlock.ac}
+          onChange={(ac) => {
+            patch({ ac });
+          }}
+        />
+        <TextField
+          label="AC note"
+          value={statBlock.acNote}
+          onChange={(acNote) => {
+            patch({ acNote });
+          }}
+        />
+        <NumberField
+          label="HP"
+          value={statBlock.hp}
+          onChange={(hp) => {
+            patch({ hp });
+          }}
+        />
+        <TextField
+          label="HP formula"
+          value={statBlock.hpFormula}
+          onChange={(hpFormula) => {
+            patch({ hpFormula });
+          }}
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {ABILITIES.map((ability) => (
+          <NumberField
+            key={ability}
+            label={
+              editsAbilitiesAsModifiers
+                ? `${ABILITY_LABELS[ability]} bonus`
+                : ABILITY_LABELS[ability]
+            }
+            value={
+              editsAbilitiesAsModifiers
+                ? abilityModifier(statBlock.abilities[ability])
+                : statBlock.abilities[ability]
+            }
+            onChange={(value) => {
+              patchAbility(ability, value);
+            }}
+          />
+        ))}
+      </div>
+      {editsAbilitiesAsModifiers && (
+        <p className="text-xs text-muted-foreground" data-testid="stat-block-ability-conversion">
+          Pathfinder 2e prints abilities as bonuses, so each field above is the printed bonus. The
+          score stored on this block is 10 + 2 × the bonus (a +2 bonus is stored as 14, a -1 as 8).
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <TextField
+          label="Saving throws"
+          value={statBlock.saves}
+          onChange={(saves) => {
+            patch({ saves });
+          }}
+        />
+        <TextField
+          label="Skills"
+          value={statBlock.skills}
+          onChange={(skills) => {
+            patch({ skills });
+          }}
+        />
+        <TextField
+          label="Senses"
+          value={statBlock.senses}
+          onChange={(senses) => {
+            patch({ senses });
+          }}
+        />
+        <TextField
+          label="Languages"
+          value={statBlock.languages}
+          onChange={(languages) => {
+            patch({ languages });
+          }}
+        />
+      </div>
+      <PairListEditor
+        label="Traits"
+        labelA="Name"
+        labelB="Text"
+        rows={toNamedTextRows(statBlock.traits)}
+        onChange={(rows) => {
+          patchNamedList('traits', rows);
+        }}
+      />
+      <PairListEditor
+        label="Actions"
+        labelA="Name"
+        labelB="Text"
+        rows={toNamedTextRows(statBlock.actions)}
+        onChange={(rows) => {
+          patchNamedList('actions', rows);
+        }}
+      />
+      <PairListEditor
+        label="Reactions"
+        labelA="Name"
+        labelB="Text"
+        rows={toNamedTextRows(statBlock.reactions)}
+        onChange={(rows) => {
+          patchNamedList('reactions', rows);
+        }}
+      />
+      <PairListEditor
+        label="Legendary actions"
+        labelA="Name"
+        labelB="Text"
+        rows={toNamedTextRows(statBlock.legendary)}
+        onChange={(rows) => {
+          patchNamedList('legendary', rows);
+        }}
+      />
+      <ExtrasEditor
+        extras={statBlock.extras}
+        onChange={(extras) => {
+          patch({ extras });
+        }}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,171 @@
+{
+  "_id": "BN5Lb6IsQ9Wyu3rL",
+  "name": "Wolf",
+  "type": "npc",
+  "items": [
+    {
+      "_id": "NX0owCPUZbsVJ4az",
+      "name": "Jaws",
+      "type": "melee",
+      "system": {
+        "attackEffects": {
+          "custom": "",
+          "value": [
+            "knockdown"
+          ]
+        },
+        "bonus": {
+          "value": 9
+        },
+        "damageRolls": {
+          "d9dz0n8l5x20aqoksiqt": {
+            "damage": "1d6+2",
+            "damageType": "piercing"
+          }
+        },
+        "description": {
+          "value": ""
+        },
+        "traits": {
+          "rarity": "common",
+          "value": [
+            "unarmed"
+          ]
+        }
+      }
+    },
+    {
+      "_id": "GhRRqxvK6T21zheo",
+      "name": "Pack Attack",
+      "type": "action",
+      "system": {
+        "actionType": {
+          "value": "passive"
+        },
+        "description": {
+          "value": "<p>The wolf's Strikes deal 1d4 extra damage to creatures within reach of at least two of the wolf's allies.</p>"
+        },
+        "traits": {
+          "rarity": "common",
+          "value": []
+        }
+      }
+    },
+    {
+      "_id": "dB4Pr3yiNKH32fE8",
+      "name": "Knockdown",
+      "type": "action",
+      "system": {
+        "actionType": {
+          "value": "action"
+        },
+        "description": {
+          "value": "<p>@Localize[PF2E.NPC.Abilities.Glossary.Knockdown]</p>"
+        },
+        "traits": {
+          "rarity": "common",
+          "value": []
+        }
+      }
+    }
+  ],
+  "system": {
+    "abilities": {
+      "cha": {
+        "mod": -2
+      },
+      "con": {
+        "mod": 1
+      },
+      "dex": {
+        "mod": 4
+      },
+      "int": {
+        "mod": -4
+      },
+      "str": {
+        "mod": 2
+      },
+      "wis": {
+        "mod": 2
+      }
+    },
+    "attributes": {
+      "ac": {
+        "details": "",
+        "value": 15
+      },
+      "hp": {
+        "details": "",
+        "max": 24,
+        "temp": 0,
+        "value": 24
+      },
+      "speed": {
+        "otherSpeeds": [],
+        "value": 35
+      }
+    },
+    "details": {
+      "blurb": "",
+      "languages": {
+        "details": "",
+        "value": []
+      },
+      "level": {
+        "value": 1
+      }
+    },
+    "perception": {
+      "details": "",
+      "mod": 7,
+      "senses": [
+        {
+          "type": "low-light-vision"
+        },
+        {
+          "acuity": "imprecise",
+          "range": 30,
+          "type": "scent"
+        }
+      ]
+    },
+    "saves": {
+      "fortitude": {
+        "saveDetail": "",
+        "value": 6
+      },
+      "reflex": {
+        "saveDetail": "",
+        "value": 9
+      },
+      "will": {
+        "saveDetail": "",
+        "value": 5
+      }
+    },
+    "skills": {
+      "acrobatics": {
+        "base": 7
+      },
+      "athletics": {
+        "base": 6
+      },
+      "stealth": {
+        "base": 7
+      },
+      "survival": {
+        "base": 7
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "size": {
+        "value": "med"
+      },
+      "value": [
+        "animal"
+      ]
+    }
+  }
+}

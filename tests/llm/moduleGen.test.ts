@@ -1,0 +1,2173 @@
+import 'fake-indexeddb/auto';
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '@testing-library/react';
+
+import { createCampaign } from '@/db/campaignRepo';
+import { createArtifact } from '@/db/artifactRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { db } from '@/db/db';
+import { listModuleVersions } from '@/db/moduleVersionRepo';
+import { getModule, patchModule, saveModule, saveModuleLevels } from '@/db/moduleRepo';
+import { createRulebook } from '@/db/rulebookRepo';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
+import { createModule, moduleDocumentFromView, moduleEntityKindSchema, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
+import { moduleDocumentSections } from '@/domain/moduleDocument';
+import type { GameSystem } from '@/domain/gameSystem';
+import { sha256Hex } from '@/lib/hash';
+import { searchRules } from '@/search';
+import {
+  cancelModuleGen,
+  campaignCastContext,
+  CAMPAIGN_CAST_NAME_CAP,
+  classifyEntityName,
+  classifyNewModuleEntityNames,
+  startCampaignDocument,
+  generateMissingParts,
+  NORMALIZATION_FAILURE_MESSAGE,
+  normalizeModuleEntityNames,
+  normalizePartMarkdown,
+  PRIOR_MODULE_CHAR_CAP,
+  PRIOR_MODULES_TOTAL_CAP,
+  PRIOR_PART_CHAR_CAP,
+  priorModulesContext,
+  rewritePart,
+  runParts,
+} from '@/llm/moduleGen';
+import { PART_SCENE_FIELD_LABELS, PART_SCENE_VARIATION_DEMANDS } from '@/llm/promptStyles';
+import { clearDatabase } from '../db/helpers';
+import { useProgressStore } from '@/lib/progress';
+import type { ChatResult } from '@/llm/openrouter';
+
+/**
+ * Module Designer generator (08-MODULE-DESIGNER M4-B) with a mocked chat:
+ * spine success/invalid-JSON failure, sequential parts with continuity,
+ * failed-part continuation, short-output retry, generateMissingParts,
+ * rewritePart, cancel rewinds, the ModuleBusyError guard, and the
+ * model-decided entity kinds (08 §M4-C).
+ */
+
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
+
+vi.mock('@/lib/toast', () => ({
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
+
+const { chat } = await import('@/llm/openrouter');
+const chatMock = vi.mocked(chat);
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
+
+const TEST_MODEL = 'test/fixture-model';
+
+const VALID_SPINE = {
+  premise: 'A harbor town raised its bell to warn of the drownings; now the bell rings by itself.',
+  themes: ['duty', 'decay'],
+  partPlan: [
+    {
+      title: 'The Sunken Quarter',
+      levelBand: '1',
+      synopsis: 'The party arrives with the low tide and finds the first bodies.',
+      levelUpTrigger: 'The bell is found.',
+    },
+    {
+      title: 'The Drowned Cathedral',
+      levelBand: '2',
+      synopsis: 'Descent beneath the harbor to the flooded nave.',
+      levelUpTrigger: 'The warden falls.',
+    },
+    {
+      title: 'The Bell Tower',
+      levelBand: '3',
+      synopsis: 'Final confrontation at the top of the leaning tower.',
+      levelUpTrigger: 'The cult is broken.',
+    },
+  ],
+  // 08 §M4-C: the model declares each entity's kind when it invents the name.
+  // The declared encounters keep the pass-0 spine gate quiet (08 §M4-B): the
+  // gate needs named `kind: "encounter"` records and nothing else — the
+  // retired wants/conflict-kind declarations are gone.
+  entities: [
+    { name: 'Warden Bellamy', kind: 'npc' },
+    { name: 'The Drowned Cathedral', kind: 'location' },
+    { name: 'The Tide Cult', kind: 'faction' },
+    { name: 'The Bells Below', kind: 'encounter' },
+    { name: 'The Flooded Nave', kind: 'encounter' },
+    { name: 'The Wardens Confession', kind: 'encounter' },
+  ],
+};
+
+/** The normalization reply for the spine's own entities: all map to themselves. */
+const SELF_NORMALIZATION = {
+  entities: [
+    { name: 'Warden Bellamy', canonical: 'Warden Bellamy', kind: 'npc' },
+    { name: 'The Drowned Cathedral', canonical: 'The Drowned Cathedral', kind: 'location' },
+    { name: 'The Tide Cult', canonical: 'The Tide Cult', kind: 'faction' },
+    { name: 'The Bells Below', canonical: 'The Bells Below', kind: 'encounter' },
+    { name: 'The Flooded Nave', canonical: 'The Flooded Nave', kind: 'encounter' },
+    { name: 'The Wardens Confession', canonical: 'The Wardens Confession', kind: 'encounter' },
+  ],
+};
+
+/** Module prose well above the 100-char floor, with a findable marker. */
+function partMarkdown(marker: string): ChatResult {
+  return {
+    text: `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
+
+/** Part prose that wiki-links the given names (for entity-kind flows). */
+function partWithNames(marker: string, names: string[]): ChatResult {
+  return {
+    text: `${partMarkdown(marker).text} Mentioned here: ${names.map((name) => `[[${name}]]`).join(' and ')}.`,
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
+
+/** A normalization reply mapping every listed name to itself with its kind. */
+function normalizationReply(entries: { name: string; kind: string }[]): ChatResult {
+  return {
+    text: JSON.stringify({
+      entities: entries.map((entry) => ({
+        name: entry.name,
+        canonical: entry.name,
+        kind: entry.kind,
+      })),
+    }),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
+
+/** Shorthand for an all-encounter normalization reply. The retired
+ * wants/conflict-kind declarations are gone: an encounter record carries its
+ * kind, and what the scene IS lives in the prose (08 §M4-B, superseded). */
+function encounterReply(...names: string[]): ChatResult {
+  return normalizationReply(names.map((name) => ({ name, kind: 'encounter' })));
+}
+
+async function seedModule(system: GameSystem = 'dnd5e'): Promise<{ campaign: Campaign; moduleId: Id }> {
+  const campaign = await createCampaign({ name: 'Emberfall', system });
+  const draft = createModule({
+    campaignId: campaign.id,
+    title: 'The Drowned Bell',
+    concept: 'A harbor bell that rings by itself beneath the water.',
+    levelMin: 1,
+    levelMax: 3,
+    tone: 'eerie',
+    sizeDial: 'standard',
+  });
+  const saved = await saveModule(draft);
+  return { campaign, moduleId: saved.id };
+}
+
+async function seedSpine(moduleId: Id): Promise<void> {
+  await patchModule(moduleId, { spine: moduleSpineSchema.parse(VALID_SPINE) });
+}
+
+/** ONE level section's own text, written through the level-addressed document
+ *  seam (the engine's own shape: `edited: false`, `origin: 'model'`). */
+async function seedLevelText(moduleId: Id, level: number, text: string): Promise<void> {
+  await saveModuleLevels(moduleId, [
+    {
+      level,
+      text,
+      state: {
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+        writerModel: '',
+        origin: 'model',
+      },
+    },
+  ]);
+}
+
+/** The sentence the plan synopsis carries for level 1 — the fixture's material. */
+const LEVEL_ONE_MATERIAL = VALID_SPINE.partPlan[0]?.synopsis ?? '';
+
+/**
+ * One READY rules book of `system` whose single section chunk shares the part
+ * synopsis's own tokens (`low tide`) and carries a system-distinct marker
+ * sentence. Both books are therefore retrieved by an UNSCOPED search of the
+ * part's synopsis — which is exactly what makes the scope visible.
+ */
+async function seedReadyRulesBook(
+  system: GameSystem,
+  title: string,
+  marker: string,
+): Promise<void> {
+  const book = await createRulebook({ title, system, filename: `${system}.pdf` });
+  await db.rulebooks.update(book.id, { status: 'ready' });
+  const text = `${marker}: when the low tide turns, the ritual is measured in the system's own units.`;
+  const chunk = ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId: book.id,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'section',
+    headingPath: [marker],
+    text,
+    contentHash: await sha256Hex(text),
+    statBlock: null,
+  });
+  await putChunks([chunk]);
+}
+
+/** The LEVEL 1 prompt sent since `startIndex` — found by its own heading rather
+ *  than a fixed call index, so the normalization call after each pass cannot
+ *  shift it. The heading names the LEVEL, its number (docs/17 row 391). */
+function partPromptSince(startIndex: number): string {
+  for (let index = startIndex; index < chatMock.mock.calls.length; index += 1) {
+    const prompt = userPromptOf(index);
+    if (prompt.includes('Write level 1.')) return prompt;
+  }
+  throw new Error('no part prompt was sent since the given call index');
+}
+
+/**
+ * Seeds one ready part. `edited: false` is the GENERATOR's own shape, so the
+ * part records `origin: 'model'` (the generator writes `edited: false` +
+ * `origin: 'model'` itself, docs/17 row 113); `edited: true` is text written
+ * outside the generator, and this helper seeds it as the owner's — pass an
+ * explicit `origin` to seed a canvas-applied MODEL part, which is ALSO
+ * `edited: true`.
+ */
+async function seedReadyPart(
+  moduleId: Id,
+  planIndex: number,
+  markdown: string | ChatResult,
+  options: { edited?: boolean; origin?: ModulePart['origin'] } = {},
+): Promise<void> {
+  const current = await getModule(moduleId);
+  if (current === undefined) throw new Error('seed module is missing');
+  const prose = typeof markdown === 'string' ? markdown : markdown.text;
+  const edited = options.edited === true;
+  const parts = current.parts.filter((part) => part.planIndex !== planIndex);
+  parts.push({
+    planIndex,
+    markdown: prose,
+    status: 'ready',
+    errorMessage: '',
+    edited,
+    writerModel: '',
+    origin: options.origin ?? (edited ? 'human' : 'model'),
+  });
+  parts.sort((a, b) => a.planIndex - b.planIndex);
+  await patchModule(moduleId, { parts });
+}
+
+/** Text-only view of a possibly multimodal message. */
+function messageText(content: Parameters<typeof chat>[0][number]['content']): string {
+  return typeof content === 'string'
+    ? content
+    : content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+}
+
+/** The user message of the n-th chat call ('' when the call is missing). */
+function userPromptOf(callIndex: number): string {
+  const messages = chatMock.mock.calls[callIndex]?.[0];
+  const content = messages?.find((message) => message.role === 'user')?.content;
+  return content === undefined ? '' : messageText(content);
+}
+
+/** All user-message content of the n-th chat call, joined — retry nudges are
+ * appended as a second user message after the original instruction. */
+function userMessagesOf(callIndex: number): string {
+  const messages = chatMock.mock.calls[callIndex]?.[0] ?? [];
+  return messages
+    .filter((message) => message.role === 'user')
+    .map((message) => messageText(message.content))
+    .join('\n\n');
+}
+
+/** Resolves only via the returned resolve — for observing in-flight states. */
+function deferredChat(): { promise: Promise<ChatResult>; resolve: (value: string) => void } {
+  let resolve!: (value: string) => void;
+  const promise = new Promise<string>((res) => {
+    resolve = res;
+  });
+  return { promise: promise.then((text) => ({ text, modelUsed: 'test-model', fallback: null })), resolve };
+}
+
+/**
+ * A chat call that never settles on its own and rejects with AbortError when
+ * the moduleGen abort signal fires (mirrors the real client's abort path).
+ */
+function chatUntilAborted(signal: AbortSignal | undefined): Promise<ChatResult> {
+  return new Promise<ChatResult>((_resolve, reject) => {
+    const abortError = (): DOMException =>
+      new DOMException('The operation was aborted.', 'AbortError');
+    if (signal === undefined || signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    signal.addEventListener('abort', () => {
+      reject(abortError());
+    }, { once: true });
+  });
+}
+
+/** No-op rejection handler: an earlier failing assertion in the same test
+ * must not turn the still-pending run into an unhandled rejection. */
+function guard<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => undefined);
+  return promise;
+}
+
+beforeEach(async () => {
+  await clearDatabase();
+  // The generator reads the model from the settings row on every run.
+  await updateSettings({ defaultChatModel: TEST_MODEL });
+});
+
+afterEach(() => {
+  chatMock.mockReset();
+  toastErrorMock.mockReset();
+  vi.restoreAllMocks();
+});
+
+describe('moduleGen pure helpers', () => {
+  it('normalizePartMarkdown strips one leading H1 and keeps prose of 100+ chars', () => {
+    const body = 'The tide retreats down the spiral stair, leaving salt on every stone. '.repeat(3);
+    const stripped = normalizePartMarkdown(`# The Sunken Quarter\n\n${body}`);
+    expect(stripped.startsWith('#')).toBe(false);
+    expect(stripped).toBe(body.trim());
+    // Prose without an H1 passes through untouched.
+    expect(normalizePartMarkdown(body)).toBe(body.trim());
+  });
+
+  it('normalizePartMarkdown throws below 100 characters', () => {
+    expect(() => normalizePartMarkdown('# Title\nToo short.')).toThrow('too short');
+  });
+});
+
+describe('the parts prompt grounds in the campaign’s own game system (docs/17 row 207)', () => {
+  const PF2E_MARKER = 'PF2E-ONLY-RULE';
+  const DND5E_MARKER = 'DND5E-ONLY-RULE';
+
+  /** Answers every part call with portable prose naming one encounter, and
+   *  every normalization call with that encounter — so `runParts` completes. */
+  function answerCalls(): void {
+    chatMock.mockImplementation((messages: Parameters<typeof chat>[0]) => {
+      const user = messages.find((message) => message.role === 'user')?.content;
+      const prompt = user === undefined ? '' : messageText(user);
+      return Promise.resolve(
+        prompt.includes('Write level 1.')
+          ? partWithNames('PART-ONE', ['Ember Trial'])
+          : encounterReply('Ember Trial'),
+      );
+    });
+  }
+
+  it('a pf2e module never grounds in an installed dnd5e book, and the same-system prompt is UNCHANGED by it', async () => {
+    await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
+    const ownSystemOnly = await seedModule('pathfinder2e');
+    await seedSpine(ownSystemOnly.moduleId);
+    await seedLevelText(ownSystemOnly.moduleId, 1, LEVEL_ONE_MATERIAL);
+    answerCalls();
+    await runParts(ownSystemOnly.moduleId, ownSystemOnly.campaign, { levels: [1] });
+    const promptOwnSystemOnly = partPromptSince(0);
+    expect(promptOwnSystemOnly).toContain(PF2E_MARKER);
+    expect(promptOwnSystemOnly).not.toContain(DND5E_MARKER);
+
+    // Install the other system's book AFTER that prompt was captured.
+    await seedReadyRulesBook('dnd5e', 'D&D 5e SRD', DND5E_MARKER);
+    // Non-vacuity: the UNSCOPED read retrieves BOTH books for the same query
+    // (the level's own material, which is what the prompt searches with).
+    const unscopedText = (await searchRules(LEVEL_ONE_MATERIAL, { limit: 4 }))
+      .map((hit) => hit.chunk.text)
+      .join('\n');
+    expect(unscopedText).toContain(PF2E_MARKER);
+    expect(unscopedText).toContain(DND5E_MARKER);
+
+    // The SAME library state plus that foreign book: a fresh, identical
+    // campaign and module, so the ONLY difference is what the library holds.
+    const withForeignBook = await seedModule('pathfinder2e');
+    await seedSpine(withForeignBook.moduleId);
+    await seedLevelText(withForeignBook.moduleId, 1, LEVEL_ONE_MATERIAL);
+    const callsBefore = chatMock.mock.calls.length;
+    await runParts(withForeignBook.moduleId, withForeignBook.campaign, { levels: [1] });
+    const promptWithForeignBook = partPromptSince(callsBefore);
+    expect(promptWithForeignBook).toBe(promptOwnSystemOnly);
+    expect(promptWithForeignBook).not.toContain(DND5E_MARKER);
+  }, 20000);
+
+  it('is the mirror: a dnd5e module grounds in dnd5e rules text, never in the pf2e book’s', async () => {
+    await seedReadyRulesBook('dnd5e', 'D&D 5e SRD', DND5E_MARKER);
+    await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
+    const { campaign, moduleId } = await seedModule('dnd5e');
+    await seedSpine(moduleId);
+    await seedLevelText(moduleId, 1, LEVEL_ONE_MATERIAL);
+    answerCalls();
+    await runParts(moduleId, campaign, { levels: [1] });
+    const prompt = partPromptSince(0);
+    expect(prompt).toContain(DND5E_MARKER);
+    expect(prompt).not.toContain(PF2E_MARKER);
+  }, 20000);
+});
+
+describe('runParts', () => {
+  it('records each part\u2019s own serving model, including a too-short repair turn', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce({ text: 'The bell rings at midnight.', modelUsed: 'short/model', fallback: null }) // too short
+      .mockResolvedValueOnce({
+        text: 'PART-ONE-RETRY: the tide withdraws and the streets shine wet. '.repeat(3),
+        modelUsed: 'repair/model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({
+        text: 'PART-TWO: the cathedral drowns slowly beneath the harbor. '.repeat(3),
+        modelUsed: 'second/model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
+
+    const finished = await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    const first = finished.parts.find((part) => part.planIndex === 0);
+    const second = finished.parts.find((part) => part.planIndex === 1);
+    // The retried part records the model that produced the text that shipped.
+    expect(first?.markdown).toContain('PART-ONE-RETRY');
+    expect(first?.writerModel).toBe('repair/model');
+    // Each part records ITS OWN model, never the module's or its neighbour's.
+    expect(second?.writerModel).toBe('second/model');
+  }, 20000);
+
+  it('generates parts sequentially, feeding part i the current text of part i−1', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      // The post-parts normalization pass maps the three encounters (08 §M4-B
+      // floor gate counts on these canonicals).
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    const finished = await runParts(moduleId, campaign);
+
+    expect(finished.status).toBe('ready');
+    expect(finished.errorMessage).toBe('');
+    expect(finished.parts.map((part) => part.planIndex)).toEqual([0, 1, 2]);
+    for (const [index, marker] of ['PART-ONE', 'PART-TWO', 'PART-THREE'].entries()) {
+      const part = finished.parts[index];
+      expect(part?.status).toBe('ready');
+      expect(part?.edited).toBe(false);
+      expect(part?.errorMessage).toBe('');
+      expect(part?.markdown).toContain(marker);
+    }
+
+    expect(chatMock).toHaveBeenCalledTimes(4);
+    // Calls happen in plan order, one per part.
+    expect(userPromptOf(0)).toContain('Write level 1.');
+    expect(userPromptOf(1)).toContain('Write level 2.');
+    expect(userPromptOf(2)).toContain('Write level 3.');
+    // Part 0 has no predecessor; the word target comes from the size dial.
+    expect(userPromptOf(0)).not.toContain('Full markdown of the previous level');
+    expect(userPromptOf(0)).toContain('800–1500 words');
+    // Every part prompt states its encounter share (08 §M4-B REQUIREMENT).
+    expect(userPromptOf(0)).toContain('encounter floor for this part');
+    // Continuity = the FINAL markdown of the previous part.
+    expect(userPromptOf(1)).toContain('Full markdown of the previous level');
+    expect(userPromptOf(1)).toContain('PART-ONE');
+    expect(userPromptOf(2)).toContain('PART-TWO');
+  }, 20000);
+
+  it('the parts prompt asks for the scene block field set, in order, and the anti-formula rule next to it', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValue({
+      text: `${'The tide withdraws. '.repeat(20)}\n`,
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await runParts(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    // Every field label reaches the prompt EXACTLY once, in the declared order.
+    const at = PART_SCENE_FIELD_LABELS.map((label) => {
+      const first = prompt.indexOf(`**${label}**`);
+      expect(first, `field label ${label} missing from the parts prompt`).toBeGreaterThanOrEqual(0);
+      expect(prompt.split(`**${label}**`)).toHaveLength(2);
+      return first;
+    });
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+    // The tag decides the artifact pipeline: an ENCOUNTER gets a map and a
+    // monster roster, an EVENT gets an illustration and nothing else.
+    expect(prompt).toContain('tag it by what the scene is FOR');
+    // The scene's HEADING carries the wiki-link, because the encounter floor
+    // counts canonical `[[encounter]]` LINKS in the part text — a scene named
+    // only in passing prose would be invisible to it.
+    expect(prompt).toContain('### [[Scene Name]] — ENCOUNTER');
+    expect(prompt).toContain('Link every scene this way');
+    // The "what changed" test is carried VERBATIM (the brief requires it).
+    expect(prompt).toContain(
+      'If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.',
+    );
+    // The read-aloud boundary and the no-authored-PC rule are stated.
+    expect(prompt).toContain('THIS IS THE ONLY TEXT A GM READS ALOUD');
+    expect(prompt).toContain('Never author what a player character does, says, thinks or feels.');
+    expect(prompt).toContain('Introduce at most one new entity per scene');
+    expect(prompt).toContain('End the part with at least two threads pointing into other parts.');
+  }, 20000);
+
+  it('the anti-formula demands ride the SAME prompt, verbatim (owner requirement, docs/17 row 73)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValue({
+      text: `${'The tide withdraws. '.repeat(20)}\n`,
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await runParts(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    for (const demand of PART_SCENE_VARIATION_DEMANDS) {
+      expect(prompt, `variation demand missing from the parts prompt: ${demand}`).toContain(demand);
+    }
+    // …immediately NEXT TO the field list, not buried elsewhere in the prompt:
+    // the demands sit inside the same instruction block, after the last field.
+    const lastField = prompt.lastIndexOf(`**${PART_SCENE_FIELD_LABELS[PART_SCENE_FIELD_LABELS.length - 1]}**`);
+    const firstDemand = prompt.indexOf(`- ${PART_SCENE_VARIATION_DEMANDS[0]}`);
+    expect(firstDemand).toBeGreaterThan(lastField);
+    // The block is explicitly not a form, and padding is explicitly refused.
+    expect(prompt).toContain('It is not a form to fill in');
+    expect(prompt).toContain('never write filler to satisfy a label');
+    // No ratio/quota demand ever rides with it (docs/08 §M4-B-1 boundary).
+    expect(prompt).not.toContain('scenes per part');
+    expect(prompt).not.toMatch(/% of (the )?(scenes|part)/i);
+  }, 20000);
+
+  it('repairs a failed part against the floor and still lands the module on ready', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
+      .mockRejectedValueOnce(new Error('provider exploded mid-part'))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      // First normalization: only the two landed parts name encounters.
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Bell Trial'))
+      // The floor gate's ONE repair rewrite for the failed part.
+      .mockResolvedValueOnce(partWithNames('PART-TWO-REPAIRED', ['Flood Trial']))
+      // Second normalization after the repair.
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    const finished = await runParts(moduleId, campaign);
+
+    expect(finished.status).toBe('ready');
+    const [one, two, three] = finished.parts;
+    expect(one?.status).toBe('ready');
+    expect(one?.markdown).toContain('PART-ONE');
+    expect(two?.status).toBe('ready');
+    expect(two?.markdown).toContain('PART-TWO-REPAIRED');
+    expect(three?.status).toBe('ready');
+    expect(three?.markdown).toContain('PART-THREE');
+    // Bounded repair: 3 part calls + 1 normalization + 1 repair + 1
+    // re-normalization — exactly one rewrite for the deficient part.
+    expect(chatMock).toHaveBeenCalledTimes(6);
+    expect(userMessagesOf(4)).toContain('Encounter floor repair');
+    // The immediate predecessor of part 3 is failed, so its prompt carries no
+    // continuity section at all (the impl never falls back to an earlier part).
+    expect(userPromptOf(2)).not.toContain('Full markdown of the previous level');
+    // Part-level failures surface on the part row, not as a module toast.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('retries a <100-char part output once and succeeds', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null }) // 27 chars: too short
+      .mockResolvedValueOnce(partWithNames('PART-ONE-RETRY', ['Ember Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
+
+    const finished = await runParts(moduleId, campaign, { levels: [1] });
+
+    expect(chatMock).toHaveBeenCalledTimes(3);
+    expect(userMessagesOf(1)).toContain('Your previous reply was too short');
+    const part = finished.parts.find((entry) => entry.planIndex === 0);
+    expect(part?.status).toBe('ready');
+    expect(part?.markdown).toContain('PART-ONE-RETRY');
+    expect(finished.status).toBe('ready');
+  }, 20000);
+
+  it('fails the module loudly when the floor repair also comes up short', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    // Every prose call is too short: the initial write AND the floor repair.
+    chatMock.mockResolvedValue({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null });
+
+    const finished = await runParts(moduleId, campaign, { levels: [1] });
+
+    // 2 initial (short + short retry → part failed, no names → no
+    // normalization call) + 2 repair (short + short retry → still failed).
+    expect(chatMock).toHaveBeenCalledTimes(4);
+    const part = finished.parts.find((entry) => entry.planIndex === 0);
+    expect(part?.status).toBe('failed');
+    expect(part?.errorMessage).toContain('too short');
+    expect(part?.markdown).toBe('');
+    // The gate fails the module LOUDLY — never ready, parts named.
+    expect(finished.status).toBe('failed');
+    expect(finished.errorMessage).toContain('Encounter floor not met');
+    expect(finished.errorMessage).toContain('The Sunken Quarter');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Module generation failed: encounter floor not met',
+      expect.any(Error),
+    );
+  }, 20000);
+});
+
+describe('generateMissingParts', () => {
+  it('only generates the parts that are not ready yet', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE-ORIGINAL', ['Ember Trial']));
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    await generateMissingParts(moduleId, campaign);
+
+    // Part 0 was ready and is never re-called.
+    expect(chatMock).toHaveBeenCalledTimes(3);
+    expect(userPromptOf(0)).toContain('Write level 2.');
+    expect(userPromptOf(0)).not.toContain('Write level 1.');
+    expect(userPromptOf(1)).toContain('Write level 3.');
+    const after = await getModule(moduleId);
+    expect(after?.status).toBe('ready');
+    expect(after?.parts.map((part) => part.status)).toEqual(['ready', 'ready', 'ready']);
+    expect(after?.parts.find((part) => part.planIndex === 0)?.markdown).toContain(
+      'PART-ONE-ORIGINAL',
+    );
+  }, 20000);
+
+  it('is a no-op when every part is already ready', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE'));
+    await seedReadyPart(moduleId, 1, partMarkdown('PART-TWO'));
+    await seedReadyPart(moduleId, 2, partMarkdown('PART-THREE'));
+
+    await generateMissingParts(moduleId, campaign);
+
+    expect(chatMock).not.toHaveBeenCalled();
+    expect((await getModule(moduleId))?.status).toBe('draft');
+  }, 20000);
+});
+
+describe('rewritePart', () => {
+  it('passes the instruction, reuses the predecessor text, overwrites, resets edited', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE-ORIGINAL', ['Ember Trial']));
+    await seedReadyPart(moduleId, 1, partWithNames('PART-TWO-OLD', ['Flood Trial']), { edited: true });
+    await seedReadyPart(moduleId, 2, partWithNames('PART-THREE-ORIGINAL', ['Bell Trial']));
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-TWO-NEW', ['Flood Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    await rewritePart(moduleId, campaign, 2, 'Foreshadow the bell tower more heavily.');
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain(
+      'Additional instruction from the GM: Foreshadow the bell tower more heavily.',
+    );
+    // Continuity comes from part 1's predecessor (part 0's current text).
+    expect(prompt).toContain('PART-ONE-ORIGINAL');
+    const after = await getModule(moduleId);
+    expect(after?.status).toBe('ready');
+    const one = after?.parts.find((part) => part.planIndex === 0);
+    expect(one?.markdown).toContain('PART-ONE-ORIGINAL'); // untouched
+    const two = after?.parts.find((part) => part.planIndex === 1);
+    expect(two?.status).toBe('ready');
+    expect(two?.markdown).toContain('PART-TWO-NEW');
+    expect(two?.edited).toBe(false); // hand-edit flag reset by the rewrite
+  }, 20000);
+});
+
+describe('cancelModuleGen', () => {
+  it('with existing ready parts: module back to ready, in-flight part parked as pending', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE-ORIGINAL'));
+    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
+    const pending = guard(runParts(moduleId, campaign, { levels: [2] }));
+    await waitFor(async () => {
+      const module = await getModule(moduleId);
+      expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+
+    // The parts run RESOLVES on abort (its Retry buttons must stay usable).
+    const after = await pending;
+    expect(after.status).toBe('ready');
+    const part0 = after.parts.find((part) => part.planIndex === 0);
+    expect(part0?.status).toBe('ready');
+    expect(part0?.markdown).toContain('PART-ONE-ORIGINAL');
+    const part1 = after.parts.find((part) => part.planIndex === 1);
+    expect(part1?.status).toBe('pending');
+    expect(part1?.errorMessage).toBe('Cancelled');
+  }, 20000);
+});
+
+describe('stop-all aborts the parts chain (signal.aborted is the source of truth)', () => {
+  /**
+   * A chat call that hangs until the moduleGen abort signal fires, then
+   * rejects with whatever shape the factory builds — stands in for every way
+   * the streaming pipeline can surface a user stop (same-realm AbortError,
+   * cross-realm AbortError, wrapped transport error, …).
+   */
+  function chatUntilAbortedWith(
+    signal: AbortSignal | undefined,
+    makeError: () => Error,
+  ): Promise<ChatResult> {
+    return new Promise<ChatResult>((_resolve, reject) => {
+      if (signal === undefined || signal.aborted) {
+        reject(makeError());
+        return;
+      }
+      signal.addEventListener(
+        'abort',
+        () => {
+          reject(makeError());
+        },
+        { once: true },
+      );
+    });
+  }
+
+  it('abort mid-parts stops the chain: later parts never start (call counts)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(async () => {
+      const module = await getModule(moduleId);
+      expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+
+    // The parts run RESOLVES on abort (its Retry buttons must stay usable).
+    const after = await pending;
+    // Part 2's chat never started: the chain stopped instead of advancing.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(after.status).toBe('ready');
+    expect(after.errorMessage).toBe('');
+    const part0 = after.parts.find((part) => part.planIndex === 0);
+    expect(part0?.status).toBe('ready');
+    expect(part0?.markdown).toContain('PART-ONE');
+    const part1 = after.parts.find((part) => part.planIndex === 1);
+    expect(part1?.status).toBe('pending');
+    expect(part1?.errorMessage).toBe('Cancelled');
+    // A planned-but-unwritten level is a DERIVED empty part (docs/17 row 382):
+    // "never started" is stated by its empty text and its pending status.
+    const neverStarted = after.parts.find((part) => part.planIndex === 2);
+    expect(neverStarted?.markdown).toBe('');
+    expect(neverStarted?.status).toBe('pending');
+    expect(neverStarted?.writerModel).toBe('');
+    // Cancellation is not an error surface: no failure toast, no errorMessage.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    // The dock job is finished: no 'generating' ghost left behind.
+    expect(
+      useProgressStore.getState().jobs.some((job) => job.id === `module-parts-${moduleId}`),
+    ).toBe(false);
+  }, 20000);
+
+  const abortShapes: [string, () => Error][] = [
+    ['same-realm AbortError', () => new DOMException('The operation was aborted.', 'AbortError')],
+    // Cross-realm stand-in: the name matches but the prototype chain does
+    // not, so `instanceof DOMException` is false — the probed real abort
+    // mid-stream under jsdom (CTOR DOMException, name AbortError).
+    [
+      'cross-realm AbortError shape',
+      () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }),
+    ],
+    ['plain transport Error', () => new Error('connection reset mid-stream')],
+    ['reader-style TypeError', () => new TypeError('Body used already for another stream')],
+  ];
+
+  for (const [shapeName, makeError] of abortShapes) {
+    it(`stops the chain when the abort surfaces as: ${shapeName}`, async () => {
+      const { campaign, moduleId } = await seedModule();
+      await seedSpine(moduleId);
+      chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+      chatMock.mockImplementationOnce((_messages, options) =>
+        chatUntilAbortedWith(options.signal, makeError),
+      );
+
+      const pending = guard(runParts(moduleId, campaign));
+      await waitFor(async () => {
+        const module = await getModule(moduleId);
+        expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+      });
+
+      cancelModuleGen(moduleId);
+
+      const after = await pending;
+      // Misclassification would continue the chain into part 2 (a third chat
+      // call); cancellation stops it regardless of the error shape.
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(after.status).toBe('ready');
+      expect(after.errorMessage).toBe('');
+      expect(after.parts.find((part) => part.planIndex === 1)?.status).toBe('pending');
+      expect(toastErrorMock).not.toHaveBeenCalled();
+      expect(
+        useProgressStore.getState().jobs.some((job) => job.id === `module-parts-${moduleId}`),
+      ).toBe(false);
+    }, 20000);
+  }
+
+  it('does not advance past a part that completed after the stop was requested', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+    const partTwo = deferredChat();
+    chatMock.mockImplementationOnce(() => partTwo.promise);
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(async () => {
+      const module = await getModule(moduleId);
+      expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+    // The transport delivers part 2 anyway (late abort delivery) — the loop
+    // guard still stops the chain instead of advancing to part 3.
+    partTwo.resolve(partMarkdown('PART-TWO').text);
+
+    const after = await pending;
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(after.status).toBe('ready');
+    expect(after.errorMessage).toBe('');
+    // Work that already landed stays; nothing new starts.
+    expect(after.parts.find((part) => part.planIndex === 1)?.status).toBe('ready');
+    const neverStarted = after.parts.find((part) => part.planIndex === 2);
+    expect(neverStarted?.markdown).toBe('');
+    expect(neverStarted?.status).toBe('pending');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+
+});
+
+describe('entity name normalization (fix-01)', () => {
+  it('replaces entityKinds with canonical records and rewrites generated part text', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Guard Halmund', 'Halmunds', 'Halmund']));
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Halmund',
+      summary: 'The guard of the drowned bell.',
+    });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        entities: [
+          { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    // REPLACED, not merged: one canonical record carrying the absorbed variants.
+    expect(after?.entityKinds).toEqual([
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
+    ]);
+    // Generated part: link targets rewritten, display text preserved.
+    const part = after?.parts.find((entry) => entry.planIndex === 0);
+    expect(part?.markdown).toContain('[[Halmund|Guard Halmund]]');
+    expect(part?.markdown).toContain('[[Halmund|Halmunds]]');
+    expect(part?.markdown).toContain('[[Halmund]]');
+    // The variant names became aliases on the canonical artifact.
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    expect(artifacts[0]?.aliases).toEqual(['Guard Halmund', 'Halmunds']);
+    // No hand-edited text involved → no proposals.
+    expect(after?.entityRewriteProposals).toBeNull();
+  }, 20000);
+
+  it('holds hand-edited parts and the premise as proposals instead of rewriting', async () => {
+    const { moduleId } = await seedModule();
+    await patchModule(moduleId, {
+      spine: moduleSpineSchema.parse({ ...VALID_SPINE, premise: 'The bell tolls for [[Halmund]] and [[Guard Halmund]].' }),
+    });
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Halmunds']));
+    await seedReadyPart(moduleId, 1, partWithNames('PART-TWO', ['Halmunds']), { edited: true });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        entities: [
+          { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const after = await getModule(moduleId);
+    // The generated part was rewritten; the premise and the hand-edited part
+    // were not.
+    expect(after?.parts.find((entry) => entry.planIndex === 0)?.markdown).toContain('[[Halmund|Halmunds]]');
+    expect(after?.spine?.premise).toContain('[[Guard Halmund]]');
+    expect(after?.parts.find((entry) => entry.planIndex === 1)?.markdown).toContain('[[Halmunds]]');
+    expect(after?.parts.find((entry) => entry.planIndex === 1)?.edited).toBe(true);
+    expect(after?.entityRewriteProposals).toEqual([
+      { planIndex: -1, replacements: [{ from: 'Guard Halmund', to: 'Halmund' }] },
+      { planIndex: 1, replacements: [{ from: 'Halmunds', to: 'Halmund' }] },
+    ]);
+  }, 20000);
+
+  it('records the failure and toasts when the reply is invalid twice; the module stays ready', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['The Undercroft']));
+    chatMock.mockResolvedValue({ text: JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('omitted the listed name "The Undercroft"');
+    expect(chatMock).toHaveBeenCalledTimes(2); // one retry with the violations stated
+    expect(userMessagesOf(1)).toContain('Your previous reply was invalid');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
+  }, 20000);
+
+  it('classifies a single hand-typed name with kind and canonical verdict', async () => {
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
+
+    const verdict = await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', [
+      'Halmund',
+    ]);
+
+    expect(verdict).toEqual({ kind: 'npc', canonical: 'Halmund' });
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Some Guard watches the quay.');
+    expect(prompt).toContain('A haunted keep.');
+    expect(prompt).toContain('Halmund'); // the campaign artifact index is included
+  }, 20000);
+
+  it('classifyEntityName rejects a contract-violating reply after the retry', async () => {
+    // The reply never answers for the requested name — an invalid reply after
+    // the one retry must throw, never silently resolve.
+    chatMock.mockResolvedValue({ text: JSON.stringify({ entities: [{ name: 'Someone Else', canonical: 'Someone Else', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
+
+    await expect(classifyEntityName('Kael', '', '', [])).rejects.toThrow('violated its contract');
+    expect(chatMock).toHaveBeenCalledTimes(2);
+  }, 20000);
+
+  it('normalization failure plus an encounter shortfall fails the module loudly (both recorded)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Kael']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['The Undercroft']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', []))
+      // The normalization pass fails twice (call + retry) — and the prose
+      // names no encounters, so the floor gate cannot pass either.
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      // The floor repair rewrites each deficient part once — the provider is
+      // still down, so every repair fails on its part row.
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      .mockRejectedValueOnce(new Error('normalization provider down'));
+
+    const finished = await runParts(moduleId, campaign);
+
+    // 3 part calls + 1 normalization attempt (a transport error fails the
+    // pass outright — only invalid replies retry) + exactly ONE repair
+    // attempt per deficient part (3) + 1 re-normalization attempt: the
+    // repair is bounded, then the module fails loudly.
+    expect(chatMock).toHaveBeenCalledTimes(8);
+    expect(finished.status).toBe('failed');
+    expect(finished.errorMessage).toContain('Encounter floor not met');
+    // Good parts are preserved: the failed repairs restored the pre-repair
+    // prose (no rollback of content — the parts stay retryable).
+    expect(finished.parts.every((part) => part.status === 'ready')).toBe(true);
+    expect(finished.parts[0]?.markdown).toContain('PART-ONE');
+    // The normalization failure stays recorded on the row (loud, retryable
+    // in the panel) — the floor message says the count used stale kinds.
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('normalization provider down');
+    expect(finished.errorMessage).toContain('last recorded kinds');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Module generation failed: encounter floor not met',
+      expect.any(Error),
+    );
+  }, 20000);
+});
+
+describe('incremental classification of names the text picked up later (08 §M4-C)', () => {
+  /** A module whose last pass succeeded: `Kael` recorded, gate open. */
+  async function seedNormalizedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
+    const seeded = await seedModule();
+    await seedSpine(seeded.moduleId);
+    await seedReadyPart(seeded.moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+    await normalizeModuleEntityNames(seeded.moduleId);
+    chatMock.mockClear();
+    return seeded;
+  }
+
+  it('records ONLY the new names, leaves the recorded ones byte-identical and never calls twice', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    const before = await getModule(moduleId);
+    const recordedKael = before?.entityKinds[0];
+    expect(recordedKael?.name).toBe('Kael');
+    // A later text change (any event: chat, hand edit, rewrite, restore).
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: ['Harbormaster Vex'], failed: false });
+    const after = await getModule(moduleId);
+    // Untouched and not re-keyed (identity is the domain helper's unit pin;
+    // a row read re-parses, so compare values here).
+    expect(after?.entityKinds[0]).toEqual(recordedKael);
+    expect(after?.entityKinds.map((entry) => entry.name)).toEqual(['Kael', 'Harbormaster Vex']);
+    expect(after?.entityKinds[1]?.kind).toBe('npc');
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    // The pass was asked about the NEW names only; the recorded canonical rode
+    // along as the (legal) vocabulary, never as a name to answer for.
+    const prompt = userMessagesOf(0);
+    expect(prompt).toContain('Harbormaster Vex');
+    expect(prompt).toContain('Entity names already recorded for this module');
+    expect(prompt).not.toContain('- Kael');
+
+    // Idempotent: a second run has nothing to classify — no call, no write.
+    const again = await classifyNewModuleEntityNames(moduleId);
+    expect(again).toEqual({ classified: [], failed: false });
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect((await getModule(moduleId))?.entityKinds).toEqual(after?.entityKinds);
+  }, 20000);
+
+  it('folds a new variant onto a RECORDED canonical without a duplicate record (held as a proposal)', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    // The variant arrives in hand-edited text (the one part-text save path
+    // stamps `edited: true` — a chat-applied part is exactly this case).
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Warden Kael']), {
+      edited: true,
+    });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Warden Kael', canonical: 'Kael', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: ['Warden Kael'], failed: false });
+    const after = await getModule(moduleId);
+    // No second record for the variant, and the canonical's record is intact.
+    expect(after?.entityKinds.map((entry) => entry.name)).toEqual(['Kael']);
+    // The rewrite waits for consent — the edited text is NOT touched.
+    expect(after?.entityRewriteProposals).toEqual([
+      { planIndex: 0, replacements: [{ from: 'Warden Kael', to: 'Kael' }] },
+    ]);
+    expect(after?.parts[0]?.markdown).toContain('[[Warden Kael]]');
+    expect(after?.entityNamesNormalized).toBe(true);
+  }, 20000);
+
+  it('preserves a review the user has not answered and unions the new rewrites', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await patchModule(moduleId, {
+      entityRewriteProposals: [{ planIndex: -1, replacements: [{ from: 'the Bell', to: 'Bell' }] }],
+    });
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Warden Kael']), {
+      edited: true,
+    });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Warden Kael', canonical: 'Kael', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    expect((await getModule(moduleId))?.entityRewriteProposals).toEqual([
+      { planIndex: -1, replacements: [{ from: 'the Bell', to: 'Bell' }] },
+      { planIndex: 0, replacements: [{ from: 'Warden Kael', to: 'Kael' }] },
+    ]);
+  }, 20000);
+
+  it('records the failure, closes the gate and adds NO record when the reply is invalid twice', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    const before = await getModule(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    // Answers for the wrong name — invalid after the one stated retry.
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: [], failed: true });
+    const after = await getModule(moduleId);
+    // Nothing guessed: no record for the unverified name, the existing record
+    // survives, and the gate is CLOSED with the error recorded (loud).
+    expect(after?.entityKinds).toEqual(before?.entityKinds);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('invented a name');
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(userMessagesOf(1)).toContain('Your previous reply was invalid');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
+  }, 20000);
+
+  it('refuses to run while the row still says the text is not normalized (the full pass owns that)', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await patchModule(moduleId, { entityNamesNormalized: false });
+    chatMock.mockClear();
+
+    await expect(classifyNewModuleEntityNames(moduleId)).rejects.toThrow(
+      'Entity names are not normalized for the current text',
+    );
+    expect(chatMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('leaves another module of the same campaign untouched', async () => {
+    const { campaign, moduleId } = await seedNormalizedModule();
+    const other = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Other Bell',
+        concept: 'A second module in the same campaign.',
+        levelMin: 1,
+        levelMax: 2,
+        sizeDial: 'sketch',
+      }),
+    );
+    await patchModule(other.id, {
+      spine: moduleSpineSchema.parse(VALID_SPINE),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: 'The bells of [[Kael]] ring.',
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+        }),
+      ],
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [] }],
+      entityNamesNormalized: true,
+    });
+    const otherBefore = await getModule(other.id);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    const otherAfter = await getModule(other.id);
+    expect(otherAfter?.entityKinds).toEqual(otherBefore?.entityKinds);
+    expect(otherAfter?.parts).toEqual(otherBefore?.parts);
+    expect(otherAfter?.entityNamesNormalized).toBe(true);
+    expect(otherAfter?.entityRewriteProposals).toBeNull();
+    // The classified module keeps its own record set.
+    expect((await getModule(moduleId))?.entityKinds.map((entry) => entry.name)).toEqual([
+      'Kael',
+      'Harbormaster Vex',
+    ]);
+  }, 20000);
+
+  it('snapshots the pre-change document before it writes — and not at all when there is nothing to do', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    expect((await listModuleVersions(moduleId)).length).toBeGreaterThan(0);
+    const versionsBefore = (await listModuleVersions(moduleId)).length;
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    const before = await getModule(moduleId);
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    const versions = await listModuleVersions(moduleId);
+    expect(versions).toHaveLength(versionsBefore + 1);
+    expect(versions[0]?.source).toBe('normalization');
+    expect(versions[0]?.label).toBe('Classify new entity names');
+    const captured = moduleDocumentFromView({
+      spine: before?.spine ?? null,
+      parts: before?.parts ?? [],
+    });
+    expect(versions[0]?.docText).toBe(captured);
+
+    // The no-op run (nothing unclassified) must not add a version row.
+    await classifyNewModuleEntityNames(moduleId);
+    expect(await listModuleVersions(moduleId)).toHaveLength(versionsBefore + 1);
+  }, 20000);
+
+  it('a STOP mid-pass is not a normalization failure: nothing recorded, no toast, the abort propagates', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    const controller = new AbortController();
+    // The user's Stop lands while the classification call is in flight: the
+    // pass's own signal aborts and the transport rejects with the platform's
+    // AbortError (openrouter's abortable sleep is its only producer).
+    chatMock.mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    });
+
+    await expect(classifyNewModuleEntityNames(moduleId, controller.signal)).rejects.toThrow();
+
+    // The signal reaches the pass's own CALL, not only the guard around it.
+    const carried = (chatMock.mock.calls[0]?.[1] as { signal?: AbortSignal } | undefined)?.signal;
+    expect(carried).toBe(controller.signal);
+    const after = await getModule(moduleId);
+    // A stop is not a failure (ledger rows 115–117, 119): the gate stays open,
+    // no error is recorded, and the failure sentence is never toasted — the
+    // quiet cancel path owns the rewind.
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('a genuine failure with a live signal still records and toasts the ONE shared sentence', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    // A controller that never aborts: nothing was stopped, so nothing is
+    // excused — the failure is recorded (gate closed) and surfaced.
+    const controller = new AbortController();
+    chatMock.mockRejectedValue(new Error('normalization provider down'));
+
+    const result = await classifyNewModuleEntityNames(moduleId, controller.signal);
+
+    expect(result).toEqual({ classified: [], failed: true });
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('normalization provider down');
+    expect(toastErrorMock).toHaveBeenCalledWith(NORMALIZATION_FAILURE_MESSAGE, expect.any(Error));
+    // The export IS the sentence the three verbatim pins above assert — one
+    // wording for the post-parts pass, the repair re-run, the classification
+    // and the panel's belt.
+    expect(NORMALIZATION_FAILURE_MESSAGE).toBe(
+      'Entity name normalization failed — retry from the entity panel',
+    );
+  }, 20000);
+});
+
+describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
+  /** A prior module of the same campaign with premise + one written part. */
+  async function seedPriorModule(campaignId: Id): Promise<Id> {
+    const draft = createModule({
+      campaignId,
+      title: 'The Salt Ward',
+      concept: 'The chapter before this one.',
+      levelMin: 1,
+      levelMax: 2,
+      tone: '',
+      sizeDial: 'sketch',
+    });
+    const saved = await saveModule(draft);
+    await patchModule(saved.id, {
+      spine: moduleSpineSchema.parse({
+        premise: 'The Salt Ward burned on the first night of the tide.',
+        themes: ['salt'],
+        partPlan: [
+          { title: 'The Burning Ward', levelBand: '1', synopsis: 'Fire on the docks.', levelUpTrigger: 'The ward falls.' },
+        ],
+      }),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: partMarkdown('PRIOR-PART-MARKER').text,
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+        }),
+      ],
+    });
+    return saved.id;
+  }
+
+  it('parts prompts include prior modules when opted in', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await patchModule(moduleId, { includePriorModules: true });
+    await seedSpine(moduleId);
+    await seedPriorModule(campaign.id);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+
+    await runParts(moduleId, campaign, { levels: [1] });
+
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Previous modules of this campaign');
+    expect(prompt).toContain('PRIOR-PART-MARKER');
+  }, 20000);
+});
+
+describe('priorModulesContext (pure builder)', () => {
+  const CAMPAIGN = '00000000-0000-4000-8000-0000000000c9';
+
+  /** A prior module with optional premise and one written part. */
+  function priorWith(
+    title: string,
+    createdAt: number,
+    options: { premise?: string; partChars?: number } = {},
+  ): Module {
+    const draft = createModule({
+      campaignId: CAMPAIGN,
+      title,
+      concept: '',
+      levelMin: 1,
+      levelMax: 2,
+      sizeDial: 'standard',
+    });
+    const parts =
+      options.partChars === undefined
+        ? []
+        : [
+            modulePartSchema.parse({
+              planIndex: 0,
+              markdown: 'x'.repeat(options.partChars),
+              status: 'ready',
+              errorMessage: '',
+              edited: false,
+            }),
+          ];
+    const spine =
+      options.premise === undefined
+        ? null
+        : moduleSpineSchema.parse({
+            premise: options.premise,
+            themes: [],
+            partPlan: [
+              { title: 'Only', levelBand: '1', synopsis: 'Only part.', levelUpTrigger: 'End.' },
+            ],
+          });
+    return { ...draft, createdAt, spine, parts };
+  }
+
+  it('returns null when no prior module carries text', () => {
+    expect(priorModulesContext([])).toBeNull();
+    expect(priorModulesContext([priorWith('Empty', 1), priorWith('Also empty', 2)])).toBeNull();
+  });
+
+  it('includes premise-only and parts-only drafts alike', () => {
+    const context = priorModulesContext([
+      priorWith('Premise Only', 1, { premise: 'A premise without parts.' }),
+      priorWith('Parts Only', 2, { partChars: 120 }),
+    ]);
+    expect(context).toContain('Premise Only');
+    expect(context).toContain('A premise without parts.');
+    expect(context).toContain('Parts Only');
+  });
+
+  it('truncates long part text with a visible marker', () => {
+    const context = priorModulesContext([
+      priorWith('Big', 1, { premise: 'P', partChars: PRIOR_PART_CHAR_CAP + 500 }),
+    ]);
+    expect(context).toContain('…[truncated]');
+    expect(context).not.toContain('x'.repeat(PRIOR_PART_CHAR_CAP + 500));
+  });
+
+  it('caps one module’s whole block when many parts would overflow it', () => {
+    const draft = priorWith('Huge', 1);
+    const parts = [0, 1, 2].map((planIndex) =>
+      modulePartSchema.parse({
+        planIndex,
+        markdown: 'y'.repeat(PRIOR_PART_CHAR_CAP),
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    );
+    const context = priorModulesContext([{ ...draft, parts }]);
+    expect(context).toContain('…[truncated]');
+    // The whole block (plus the section header) stays near the per-module cap.
+    expect(context?.length).toBeLessThanOrEqual(PRIOR_MODULE_CHAR_CAP + 300);
+  });
+
+  it('drops the OLDEST modules first when the total cap overflows', () => {
+    const priors = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7'].map((title, index) =>
+      priorWith(title, index + 1, { partChars: PRIOR_PART_CHAR_CAP }),
+    );
+    const context = priorModulesContext(priors);
+    expect(context).not.toContain('M1');
+    expect(context).toContain('M7');
+  });
+
+  it('orders kept modules oldest first regardless of input order', () => {
+    const context = priorModulesContext([
+      priorWith('Beta', 2, { premise: 'Beta premise.' }),
+      priorWith('Alpha', 1, { premise: 'Alpha premise.' }),
+    ]);
+    if (context === null) throw new Error('context missing');
+    expect(context.indexOf('Alpha')).toBeLessThan(context.indexOf('Beta'));
+  });
+});
+
+describe('campaign cast context (auto-promote follow-up reuse)', () => {
+  it('lists moduleId-null rows with kinds and skips module-owned rows', async () => {
+    const campaignId = newId();
+    const shared = await createArtifact({ campaignId, kind: 'npc', name: 'Shared Sage' });
+    const owned = await createArtifact({ campaignId, moduleId: newId(), kind: 'location', name: 'Owned Cave' });
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const cast = campaignCastContext(await listArtifactsByCampaign(campaignId));
+
+    expect(cast).toContain('Shared Sage (npc)');
+    expect(cast).not.toContain('Owned Cave');
+    expect(shared).toBeDefined();
+    expect(owned).toBeDefined();
+  });
+
+  it('returns null when nothing is shared yet', async () => {
+    const campaignId = newId();
+    await createArtifact({ campaignId, moduleId: newId(), kind: 'npc', name: 'Owned Only' });
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    expect(campaignCastContext(await listArtifactsByCampaign(campaignId))).toBeNull();
+  });
+
+  it('caps the roster at the 60-name convention', async () => {
+    const campaignId = newId();
+    for (let index = 0; index < CAMPAIGN_CAST_NAME_CAP + 10; index += 1) {
+      await createArtifact({ campaignId, kind: 'npc', name: `Extra ${String(index).padStart(3, '0')}` });
+    }
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const cast = campaignCastContext(await listArtifactsByCampaign(campaignId));
+
+    expect(cast).not.toBeNull();
+    expect(cast?.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(CAMPAIGN_CAST_NAME_CAP);
+  });
+
+  it('rides the prior-modules section inside the total cap — even with no priors', () => {
+    const cast = campaignCastContext([
+      { name: 'Shared Sage', kind: 'npc', moduleId: null } as never,
+    ]);
+    const context = priorModulesContext([], cast);
+    expect(context).toContain('Previous modules of this campaign');
+    expect(context).toContain('Shared Sage (npc)');
+    expect(context === null ? 0 : context.length).toBeLessThanOrEqual(PRIOR_MODULES_TOTAL_CAP + 400);
+  });
+});
+
+describe('progress dock reporting', () => {
+  beforeEach(() => {
+    useProgressStore.getState().reset();
+  });
+
+  it('runParts reports per-part progress and drains it on finish', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    const first = deferredChat();
+    const second = deferredChat();
+    chatMock
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockResolvedValueOnce(partMarkdown('PART-THREE'));
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs).toHaveLength(1);
+    });
+    expect(useProgressStore.getState().jobs[0]).toMatchObject({
+      label: 'Writing 3 module levels',
+      detail: 'Writing level 1 of 3: level 1',
+      progress: 0,
+    });
+
+    first.resolve(partMarkdown('PART-ONE').text);
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs[0]).toMatchObject({
+        detail: 'Writing level 2 of 3: level 2',
+        progress: 1 / 3,
+      });
+    });
+
+    second.resolve(partMarkdown('PART-TWO').text);
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+});
+
+describe('adversarialGeneration — the creation data path (docs/17 row 354, slice 1)', () => {
+  /** The creation input the two modules below share; ONLY the flag differs. */
+  function creationInput(
+    campaignId: Id,
+    extra: { adversarialGeneration?: boolean } = {},
+  ): NewModule & { tone: string } {
+    return {
+      campaignId,
+      title: 'The Drowned Bell',
+      concept: 'A harbor bell that rings by itself beneath the water.',
+      levelMin: 1,
+      levelMax: 3,
+      tone: 'eerie',
+      sizeDial: 'standard',
+      ...extra,
+    };
+  }
+
+  it('startCampaignDocument records the flag on the created row, BOTH values', async () => {
+    // ONE document per campaign (docs/17 row 389): each arm gets its OWN
+    // campaign, because a second create in the same campaign is refused.
+    const onCampaign = await createCampaign({ name: 'Ember ON', system: 'dnd5e' });
+    const offCampaign = await createCampaign({ name: 'Ember OFF', system: 'dnd5e' });
+
+    const onId = await startCampaignDocument(
+      onCampaign,
+      creationInput(onCampaign.id, { adversarialGeneration: true }),
+    );
+    const offId = await startCampaignDocument(
+      offCampaign,
+      creationInput(offCampaign.id, { adversarialGeneration: false }),
+    );
+
+    expect((await getModule(onId))?.adversarialGeneration).toBe(true);
+    expect((await getModule(offId))?.adversarialGeneration).toBe(false);
+  }, 20000);
+});
+
+describe('durable versions — the parts passes snapshot before they write', () => {
+  /** The module row's whole document right now (the pre-change expectation)
+   * — composed through the ONE view→document seam (docs/17 row 384). */
+  async function rowDocument(moduleId: Id): Promise<string> {
+    const row = await getModule(moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    return moduleDocumentFromView({ spine: row.spine, parts: row.parts });
+  }
+
+  it('a full parts pass snapshots the pre-pass document ONCE, at entry, labelled for the pass', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    // A part already on the row (hand-authored here) — the pass overwrites it.
+    await seedReadyPart(moduleId, 0, partMarkdown('BEFORE-THE-PASS'));
+    const before = await rowDocument(moduleId);
+    expect(await listModuleVersions(moduleId)).toHaveLength(0);
+
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    const finished = await runParts(moduleId, campaign);
+    expect(finished.status).toBe('ready');
+
+    const versions = await listModuleVersions(moduleId);
+    const pass = versions.filter((entry) => entry.source === 'generation');
+    // ONE snapshot for the pass (not one per part, not one after the write).
+    expect(pass).toHaveLength(1);
+    expect(pass[0]?.label).toBe('Generate levels');
+    // BYTE-EXACT pre-change text: the document as it stood before the first
+    // part write (the seeded part still carries its own prose there).
+    expect(pass[0]?.docText).toBe(before);
+    expect(pass[0]?.docText).toContain('BEFORE-THE-PASS');
+    // The pass really changed the text (so this is a pre-change state, not a
+    // copy of the post-pass document).
+    expect(await rowDocument(moduleId)).not.toBe(before);
+    // The in-pass normalization is its own AI pass → its own snapshot.
+    expect(versions.some((entry) => entry.source === 'normalization')).toBe(true);
+  }, 20000);
+
+  it('a per-part rewrite names the part and the instruction, and captures the pre-rewrite document', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 1, partMarkdown('OLD-TWO'));
+    const before = await rowDocument(moduleId);
+
+    chatMock
+      .mockResolvedValueOnce(partWithNames('NEW-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(encounterReply('Flood Trial'));
+
+    await rewritePart(moduleId, campaign, 2, 'make the flood louder');
+
+    const versions = await listModuleVersions(moduleId);
+    const pass = versions.find((entry) => entry.source === 'generation');
+    expect(pass?.label).toBe('Rewrite level 2: make the flood louder');
+    expect(pass?.docText).toBe(before);
+    expect(pass?.docText).toContain('OLD-TWO');
+    expect((await getModule(moduleId))?.parts.find((part) => part.planIndex === 1)?.markdown).toContain(
+      'NEW-TWO',
+    );
+  }, 20000);
+
+  it('a standalone normalization pass snapshots before it rewrites part text', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Guard Halmund']));
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Halmund',
+      summary: 'The guard of the drowned bell.',
+    });
+    const before = await rowDocument(moduleId);
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const versions = await listModuleVersions(moduleId);
+    expect(versions).toHaveLength(1);
+    const [snapshot] = versions;
+    expect(snapshot?.source).toBe('normalization');
+    expect(snapshot?.label).toBe('Normalize entity names');
+    // The pre-rewrite text: the variant link, NOT the rewritten canonical one.
+    expect(snapshot?.docText).toBe(before);
+    expect(snapshot?.docText).toContain('[[Guard Halmund]]');
+    const after = (await getModule(moduleId))?.parts.find((part) => part.planIndex === 0)?.markdown ?? '';
+    expect(after).toContain('[[Halmund|Guard Halmund]]');
+    expect(after).not.toBe(snapshot?.docText);
+  }, 20000);
+});
+
+/**
+ * The global chat model is recorded at every module-generation entry point
+ * (docs/17 row 198). Module generation is NOT the run engine's funnel, so a
+ * model set in Settings and used only here never reached the top bar's
+ * "Recently used" list before this slice. One pin per entry point, against the
+ * REAL settings row; the model is moved to the FRONT with no duplicate.
+ */
+describe('recently used global chat model at the module-generation entry points (docs/17 row 198)', () => {
+  it('records the global model when a parts pass starts', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await updateSettings({ defaultChatModel: 'global/parts', recentChatModels: [] });
+    chatMock
+      .mockResolvedValueOnce(partMarkdown('PART-ONE'))
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
+
+    await runParts(moduleId, campaign, { levels: [1] });
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/parts']);
+  }, 20000);
+
+  it('records the global model when the full normalization pass starts', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    await updateSettings({ defaultChatModel: 'global/normalize', recentChatModels: [] });
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+
+    await normalizeModuleEntityNames(moduleId);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/normalize']);
+  }, 20000);
+
+  it('records the global model when the incremental classification starts', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+    await normalizeModuleEntityNames(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    await updateSettings({ defaultChatModel: 'global/classify-new', recentChatModels: [] });
+    chatMock.mockReset();
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/classify-new']);
+  }, 20000);
+
+  it('records the global model when one name is classified from the stub popover', async () => {
+    await updateSettings({ defaultChatModel: 'global/classify-one', recentChatModels: [] });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', ['Halmund']);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/classify-one']);
+  }, 20000);
+});
+
+
+/**
+ * Adversarial generation — THE TRIGGER (docs/17 row 358).
+ *
+ * Row 354 landed the flag and row 356 the pass; THIS is the wire. With the
+ * module row's `adversarialGeneration` ON, the premise is reviewed right after
+ * the spine produced it and each part as it is written, every edit lands
+ * through the EXISTING write seams, and a failed critique/editor is contained
+ * (that part's text unchanged and marked failed, the run continues).
+ *
+ * THE LOAD-BEARING PIN IS THE FLAG-OFF GOLDEN:
+ * `tests/fixtures/adversarialGeneration/flag-off-transcript.json` was captured
+ * from the tree BEFORE the trigger landed (the 89e5d71 method: the REAL
+ * `runParts` against mocked chat replies) and holds every chat
+ * call's full messages, its option set, model, temperature and response format,
+ * plus the final parts document and the per-part rows. A flag-off run at this
+ * commit must reproduce it character for character — that is what makes wiring
+ * a model-calling pass into generation safe.
+ */
+describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
+  const GOLDEN_FILE = join(
+    process.cwd(),
+    'tests',
+    'fixtures',
+    'adversarialGeneration',
+    'flag-off-transcript.json',
+  );
+
+  /** The generated part prose the scripted replies carry (exact bytes). */
+  const PART_ONE = partWithNames('PART-ONE', ['Ember Trial']);
+  const PART_TWO = partWithNames('PART-TWO', ['Flood Trial']);
+
+  type ReviewKey = 'premise' | 'part0' | 'part1';
+
+  interface GoldenCall {
+    messages: { role: string; content: unknown }[];
+    optionKeys: string[];
+    model: unknown;
+    temperature: unknown;
+    reasoningEffort: unknown;
+    responseFormat: unknown;
+  }
+
+  interface GoldenScenario {
+    calls: GoldenCall[];
+    premise: string;
+    document: string;
+    parts: {
+      planIndex: number;
+      markdown: string;
+      status: string;
+      edited: boolean;
+      origin: unknown;
+      writerModel: string;
+    }[];
+  }
+
+  function golden(): GoldenScenario {
+    return JSON.parse(readFileSync(GOLDEN_FILE, 'utf8')) as GoldenScenario;
+  }
+
+  /** The module row, loud when it is gone (the run under test just wrote it). */
+  async function requireRow(moduleId: Id): Promise<Module> {
+    const row = await getModule(moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    return row;
+  }
+
+  function promptOf(messages: Parameters<typeof chat>[0]): string {
+    const user = messages.find((message) => message.role === 'user')?.content;
+    return user === undefined ? '' : messageText(user);
+  }
+
+  function transcript(): GoldenCall[] {
+    return chatMock.mock.calls.map(([messages, options]) => {
+      const opts = options as unknown as Record<string, unknown>;
+      return {
+        messages: messages.map((message) => ({ role: message.role, content: message.content })),
+        optionKeys: Object.keys(opts).sort(),
+        model: opts.model,
+        temperature: opts.temperature,
+        reasoningEffort: opts.reasoningEffort,
+        responseFormat: opts.responseFormat ?? null,
+      };
+    });
+  }
+
+  /** The pass's critique call: its user message OPENS with the target line. */
+  function isCritique(prompt: string): boolean {
+    return prompt.startsWith('Module ') && prompt.includes(' under review:');
+  }
+
+  /** The editor call: the transform core's part/premise branch, driven by the
+   *  pass (the canvas never calls it in these tests). */
+  function isEditor(prompt: string): boolean {
+    return prompt.includes('An adversarial critique reviewed this module');
+  }
+
+  /** Which target a critique/editor call is about, by the review's own text. */
+  function reviewKey(prompt: string): ReviewKey {
+    if (prompt.includes('PART-ONE')) return 'part0';
+    if (prompt.includes('PART-TWO')) return 'part1';
+    return 'premise';
+  }
+
+  function spineReply(): ChatResult {
+    return { text: JSON.stringify(VALID_SPINE), modelUsed: TEST_MODEL, fallback: null };
+  }
+
+  function selfNormalization(): ChatResult {
+    return { text: JSON.stringify(SELF_NORMALIZATION), modelUsed: TEST_MODEL, fallback: null };
+  }
+
+  /** Answers every NON-adversarial call (the generation sequence itself). */
+  function generationReply(prompt: string): ChatResult {
+    if (prompt.includes('Module concept:')) return spineReply();
+    if (prompt.includes('For each entity name below')) {
+      const names = ['Ember Trial', 'Flood Trial'].filter((name) => prompt.includes(name));
+      return names.length > 0 ? encounterReply(...names) : selfNormalization();
+    }
+    if (prompt.includes('Write level 1.')) return PART_ONE;
+    if (prompt.includes('Write level 2.')) return PART_TWO;
+    throw new Error(`unscripted generation prompt: ${prompt.slice(0, 120)}`);
+  }
+
+  /** Installs the dispatcher: generation replies plus a script for the pass. */
+  function installChat(script: (prompt: string) => ChatResult): void {
+    chatMock.mockImplementation((messages) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt) || isEditor(prompt)) return Promise.resolve(script(prompt));
+      return Promise.resolve(generationReply(prompt));
+    });
+  }
+
+  function finding(): ChatResult {
+    return {
+      text: JSON.stringify({
+        issues: [
+          { kind: 'fun', severity: 'major', message: 'The arrival drags.', where: 'the opening' },
+        ],
+      }),
+      modelUsed: 'critic/model',
+      fallback: null,
+    };
+  }
+
+  function cleanCritique(): ChatResult {
+    return { text: JSON.stringify({ issues: [] }), modelUsed: 'critic/model', fallback: null };
+  }
+
+  /** A boundary failure: not JSON at all (the pass throws, AGENTS rule 3). */
+  function malformed(): ChatResult {
+    return { text: 'not json at all', modelUsed: 'critic/model', fallback: null };
+  }
+
+  function edited(markdown: string): ChatResult {
+    return {
+      text: JSON.stringify({ replacement: markdown }),
+      modelUsed: 'editor/model',
+      fallback: null,
+    };
+  }
+
+  /** The ONE scenario the golden pins: pass 0 then a two-part pass 1, flag OFF. */
+  async function runFlagOffSequence(): Promise<GoldenScenario> {
+    const { campaign, moduleId } = await seedModule();
+    installChat(() => {
+      throw new Error('a FLAG-OFF run issued an adversarial call');
+    });
+    // The deleted pass-0 spine, seeded DIRECTLY (docs/17 row 392): the premise,
+    // the plan and the entity RECORDS the spine reply used to leave on the row.
+    await patchModule(moduleId, {
+      spine: moduleSpineSchema.parse(VALID_SPINE),
+      entityKinds: VALID_SPINE.entities.map((entity) =>
+        moduleEntityKindSchema.parse({ name: entity.name, kind: entity.kind, absorbed: [] }),
+      ),
+    });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+    const row = await requireRow(moduleId);
+    const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
+    return {
+      calls: transcript(),
+      premise: row.spine?.premise ?? '',
+      document,
+      parts: row.parts
+        .slice()
+        .sort((a, b) => a.planIndex - b.planIndex)
+        .map((part) => ({
+          planIndex: part.planIndex,
+          markdown: part.markdown,
+          status: part.status,
+          edited: part.edited,
+          origin: part.origin,
+          writerModel: part.writerModel,
+        })),
+    };
+  }
+
+  /** A module whose row carries the flag ON (the creation data path is row
+   *  354's pin; here the row is the input we need). */
+  async function seedFlaggedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const saved = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Bell',
+        concept: 'A harbor bell that rings by itself beneath the water.',
+        levelMin: 1,
+        levelMax: 3,
+        tone: 'eerie',
+        sizeDial: 'standard',
+        adversarialGeneration: true,
+      }),
+    );
+    return { campaign, moduleId: saved.id };
+  }
+
+  it('flag OFF is BYTE-IDENTICAL to the pre-trigger tree: same calls, prompts, document and rows', async () => {
+    const expected = golden();
+    const captured = await runFlagOffSequence();
+    expect(captured.calls).toHaveLength(expected.calls.length);
+    expect(captured.calls).toEqual(expected.calls);
+    expect(captured.premise).toBe(expected.premise);
+    expect(captured.document).toBe(expected.document);
+    expect(captured.parts).toEqual(expected.parts);
+    // The pin's MEANING, stated on its own so a failure says which half broke:
+    // with the flag off, NO critique and NO editor call exists at all.
+    const prompts = captured.calls.map((call) => {
+      const user = call.messages.find((message) => message.role === 'user');
+      return typeof user?.content === 'string' ? user.content : '';
+    });
+    expect(prompts.some((prompt) => isCritique(prompt))).toBe(false);
+    expect(prompts.some((prompt) => isEditor(prompt))).toBe(false);
+  }, 20000);
+
+  it('reviews every part ONCE, in order, and calls the editor only when the critique found something', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const phases: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        phases.push(`critique:${reviewKey(prompt)}`);
+        return finding();
+      }
+      phases.push(`edit:${reviewKey(prompt)}`);
+      return edited(`${reviewKey(prompt).toUpperCase()} REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
+    });
+
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    // The pass's own call count, asserted explicitly: one critique per part,
+    // plus one editor per part because every critique DID find something.
+    expect(phases).toEqual([
+      'critique:part0',
+      'edit:part0',
+      'critique:part1',
+      'edit:part1',
+    ]);
+    // The premise was NOT reviewed by a parts pass whose spine was seeded, not
+    // generated: the premise trigger lives in pass 0 (pinned below).
+    expect(phases.some((phase) => phase.endsWith(':premise'))).toBe(false);
+    // part0, critique0, edit0, part1, critique1, edit1 — and NO normalization
+    // call: both edits removed the parts' only wiki-links, so the
+    // normalization pass has no names to classify (`normalizeModuleEntityNames`
+    // returns before its model call on an empty name set).
+    expect(chatMock.mock.calls).toHaveLength(6);
+  }, 20000);
+
+  it('does NOT call the editor when a critique finds nothing, and still reviews every part', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const phases: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        phases.push(`critique:${reviewKey(prompt)}`);
+        return reviewKey(prompt) === 'part0' ? cleanCritique() : finding();
+      }
+      phases.push(`edit:${reviewKey(prompt)}`);
+      return edited(`PART-ONE REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
+    });
+
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    expect(phases).toEqual(['critique:part0', 'critique:part1', 'edit:part1']);
+    // part0, critique0, part1, critique1, edit1, normalization.
+    expect(chatMock.mock.calls).toHaveLength(6);
+  }, 20000);
+
+  it('an accepted edit lands as the part text with the parts-document scaffolding INTACT', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const REPLACEMENT = `PART-ONE REWRITTEN: ${'the drowned bell tolls beneath the quay. '.repeat(4)}`.trim();
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        return reviewKey(prompt) === 'part0' ? finding() : cleanCritique();
+      }
+      return edited(REPLACEMENT);
+    });
+
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    const row = await requireRow(moduleId);
+    const editedPart = row.parts.find((part) => part.planIndex === 0);
+    // The seam's own shape: the ONE part-text save path stamps ready + edited
+    // and names the model that WROTE the replacement.
+    expect(editedPart?.markdown).toBe(REPLACEMENT);
+    expect(editedPart?.status).toBe('ready');
+    expect(editedPart?.edited).toBe(true);
+    expect(editedPart?.origin).toBe('model');
+    expect(editedPart?.writerModel).toBe('editor/model');
+
+    // COMPOSE and PARSE again: the derived document carries the module
+    // document's own separators (level 0 = the premise, then one section per
+    // level), and the edited markdown IS the level section's text (never a
+    // hand-assembled second document format — docs/17 row 384).
+    const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
+    expect(document).toContain('=====Level 1=====');
+    expect(document).toContain('=====Level 2=====');
+    expect(document).toContain('=====Level 3=====');
+    const sections = moduleDocumentSections(document, row.spine?.partPlan ?? []);
+    // Level 0 is the premise; the run's three planned levels follow it.
+    expect(sections).toHaveLength(4);
+    const first = sections[1];
+    expect(first?.text).toBe(REPLACEMENT);
+    expect(document.slice(first?.textFrom ?? 0, first?.textTo ?? 0)).toBe(REPLACEMENT);
+  }, 20000);
+
+  it('a FAILED critique leaves the part text UNCHANGED, marks it failed, and the run CONTINUES', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const editorCalls: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        return reviewKey(prompt) === 'part0' ? malformed() : cleanCritique();
+      }
+      editorCalls.push(reviewKey(prompt));
+      return edited('SHOULD NEVER LAND');
+    });
+
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    const row = await requireRow(moduleId);
+    const first = row.parts.find((part) => part.planIndex === 0);
+    const second = row.parts.find((part) => part.planIndex === 1);
+    // CONTENT IS NOT COST: the text the module writer produced is byte-unchanged.
+    expect(first?.markdown).toBe(PART_ONE.text);
+    expect(first?.status).toBe('failed');
+    expect(first?.errorMessage).toContain('The adversarial review failed');
+    // The run CONTINUED: part 2 was written, and no editor ran for the failed
+    // critique (a critique failure can never reach the editor).
+    expect(second?.markdown).toBe(PART_TWO.text);
+    expect(
+      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write level 2.')),
+    ).toBe(true);
+    expect(editorCalls).toEqual([]);
+  }, 20000);
+
+  it('a FAILED editor leaves the part text UNCHANGED, marks it failed, and the run CONTINUES', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const editorCalls: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) return finding();
+      editorCalls.push(reviewKey(prompt));
+      return malformed();
+    });
+
+    await runParts(moduleId, campaign, { levels: [1, 2] });
+
+    const row = await requireRow(moduleId);
+    const first = row.parts.find((part) => part.planIndex === 0);
+    const second = row.parts.find((part) => part.planIndex === 1);
+    // The editor WAS attempted for both parts (the critiques found issues) and
+    // failed — and the text is STILL byte-unchanged on both.
+    expect(editorCalls).toEqual(['part0', 'part1']);
+    expect(first?.markdown).toBe(PART_ONE.text);
+    expect(second?.markdown).toBe(PART_TWO.text);
+    expect(first?.status).toBe('failed');
+    expect(second?.status).toBe('failed');
+    expect(first?.errorMessage).toContain('The adversarial review failed');
+    expect(second?.errorMessage).toContain('The adversarial review failed');
+  }, 20000);
+
+  it('the generation Stop reaches the pass: the review call is aborted, never left running', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    let reviewSignal: AbortSignal | undefined;
+    chatMock.mockImplementation((messages, options) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt)) {
+        reviewSignal = options.signal;
+        return chatUntilAborted(options.signal);
+      }
+      return Promise.resolve(generationReply(prompt));
+    });
+
+    const pending = guard(runParts(moduleId, campaign, { levels: [1] }));
+    await waitFor(() => {
+      expect(reviewSignal).toBeDefined();
+    });
+    // The signal the pass received IS the run's own controller: un-aborted
+    // while the call is in flight…
+    expect(reviewSignal?.aborted).toBe(false);
+    cancelModuleGen(moduleId);
+    // …and aborted by the user's Stop, which is what makes chatUntilAborted
+    // reject (the run settles instead of hanging on a live model call).
+    expect(reviewSignal?.aborted).toBe(true);
+    const finished = await pending;
+    expect(finished.status).toBe('ready');
+    expect(
+      chatMock.mock.calls.some(([messages]) => isEditor(promptOf(messages))),
+    ).toBe(false);
+    expect(
+      (await getModule(moduleId))?.parts.find((part) => part.planIndex === 0)?.markdown,
+    ).toBe(PART_ONE.text);
+  }, 20000);
+
+  it('the dock detail names the sub-phases of the part under review', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    useProgressStore.getState().reset();
+    let critique: ReturnType<typeof deferredChat> | undefined;
+    chatMock.mockImplementation((messages) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt)) {
+        critique = deferredChat();
+        return critique.promise;
+      }
+      return Promise.resolve(generationReply(prompt));
+    });
+
+    const pending = guard(runParts(moduleId, campaign, { levels: [1] }));
+    await waitFor(() => {
+      const detail = useProgressStore.getState().jobs[0]?.detail ?? '';
+      expect(detail).toContain('Reviewing level 1 (1 of 1)');
+      expect(detail).toContain('critique');
+      expect(detail).toContain('edit');
+    });
+    critique?.resolve(JSON.stringify({ issues: [] }));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+});

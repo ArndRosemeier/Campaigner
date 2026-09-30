@@ -1,0 +1,387 @@
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { RouterProvider } from 'react-router-dom';
+import { z } from 'zod';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { createAppRouter } from '@/app/router';
+import {
+  ROUTES,
+  campaignIdFromPath,
+  documentPath,
+  graphPath,
+  modulePath,
+  spellsPath,
+  workspacePath,
+} from '@/app/routes';
+import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
+import { createCampaign } from '@/db/campaignRepo';
+import { createModule as saveModule } from '@/db/moduleRepo';
+import { createModule, defaultSettings } from '@/domain';
+import { saveSettings } from '@/db/settingsRepo';
+import { clearDatabase } from './db/helpers';
+
+/**
+ * App shell behavior (T1): shell + theme toggle on every route, the campaign
+ * bar (campaign tabs + breadcrumb) and the routed pages as they become real.
+ */
+
+/**
+ * These tests exercise the shell, not the first-run wizard — seed the
+ * onboarding state as finished so the wizard's one-time auto-open
+ * (fresh status + zero campaigns) never fires here. The wizard's own
+ * auto-open behavior is covered in tests/features/onboarding-wizard.test.tsx.
+ */
+async function seedSettledOnboarding(): Promise<void> {
+  await saveSettings({
+    ...defaultSettings(),
+    onboarding: { status: 'complete' as const, stepState: [] },
+  });
+}
+
+function renderAppAt(path: string): void {
+  window.history.replaceState(null, '', path);
+  render(<RouterProvider router={createAppRouter()} />);
+}
+
+/** Reads the persisted theme from the zustand persist envelope in localStorage. */
+function persistedTheme(): string | undefined {
+  const raw = localStorage.getItem(THEME_STORAGE_KEY);
+  if (!raw) return undefined;
+  const envelope = z
+    .object({ state: z.object({ theme: z.string() }), version: z.number() })
+    .parse(JSON.parse(raw) as unknown);
+  return envelope.state.theme;
+}
+
+beforeEach(async () => {
+  useThemeStore.setState({ theme: DEFAULT_THEME });
+  await seedSettledOnboarding();
+});
+
+describe('app shell', () => {
+  it('renders the top bar with app name and nav links', () => {
+    renderAppAt(ROUTES.campaignPicker);
+
+    expect(screen.getByRole('banner')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Campaigner' })).toHaveAttribute(
+      'href',
+      ROUTES.campaignPicker,
+    );
+    expect(screen.getByRole('link', { name: 'Rules' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument();
+  });
+
+  it('renders the campaign tabs disabled while no campaign is open', () => {
+    renderAppAt(ROUTES.campaignPicker);
+
+    // The app map stays visible on every route; without a campaign the
+    // campaign-level tabs are disabled instead of hidden, and each names
+    // its reason (iPad batch E: the hover-only title is mirrored into the
+    // accessible name so touch + screen-reader users get it too).
+    expect(screen.getByTestId('campaign-bar')).toBeInTheDocument();
+    for (const label of ['Workspace', 'Document', 'Graph']) {
+      expect(
+        screen.getByRole('button', { name: `${label} — open a campaign first` }),
+      ).toBeDisabled();
+    }
+  });
+
+  it('renders the campaign picker on /', () => {
+    renderAppAt(ROUTES.campaignPicker);
+
+    expect(screen.getByRole('heading', { name: 'Campaigns' })).toBeInTheDocument();
+    expect(screen.getByTestId('new-campaign')).toBeInTheDocument();
+  });
+
+  it('renders the workspace for /c/:campaignId (missing-campaign pane when empty)', async () => {
+    renderAppAt('/c/campaign-1');
+
+    expect(await screen.findByText(/does not exist/, {}, { timeout: 10000 })).toBeInTheDocument();
+  });
+
+  it('renders the workspace for /c/:campaignId/a/:artifactId', async () => {
+    renderAppAt('/c/campaign-1/a/artifact-9');
+
+    expect(await screen.findByText(/does not exist/, {}, { timeout: 10000 })).toBeInTheDocument();
+  });
+
+  it('navigates to the Rules screen from the top bar', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(screen.getByRole('link', { name: 'Rules' }));
+
+    expect(screen.getByRole('heading', { name: 'Rulebooks' })).toBeInTheDocument();
+  });
+
+  it('navigates to the Settings placeholder from the top bar', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(screen.getByRole('link', { name: 'Settings' }));
+
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('renders the not-found page for unknown routes', () => {
+    renderAppAt('/definitely-not-a-route');
+
+    expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
+  });
+});
+
+describe('campaign switcher', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedSettledOnboarding();
+  });
+
+  it('lists created campaigns, navigates on selection and shows the current one', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'The Sunless Sea', system: 'generic-d20' });
+    renderAppAt(ROUTES.campaignPicker);
+
+    // On the picker route no campaign is open yet.
+    expect(screen.getByTestId('current-campaign')).toHaveTextContent('No campaign');
+
+    await user.click(screen.getByRole('button', { name: 'Switch campaign' }));
+    expect(
+      await screen.findByRole('menuitem', { name: 'The Sunless Sea' }),
+    ).toBeInTheDocument();
+
+    // Selecting a campaign opens its DOCUMENT view (the central view — a
+    // campaign leads to its ONE document, docs/17 row 389) and updates the
+    // trigger. This campaign has no module row, so the landing renders its
+    // create state AT the document route (no redirect).
+    await user.click(screen.getByRole('menuitem', { name: 'The Sunless Sea' }));
+    expect(await screen.findByTestId('current-campaign')).toHaveTextContent('The Sunless Sea');
+    expect(window.location.pathname).toBe(documentPath(campaign.id));
+  });
+
+  it('shows the empty state before any campaign exists', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(screen.getByRole('button', { name: 'Switch campaign' }));
+
+    expect(
+      await screen.findByRole('menuitem', { name: 'No campaigns yet' }),
+    ).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('tracks the campaign in the switcher on every campaign route', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    renderAppAt(graphPath(campaign.id));
+    // The trigger renders synchronously with 'No campaign'; the live query
+    // resolves a tick later.
+    await waitFor(() => {
+      expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
+    });
+  });
+
+  it('points the campaign tabs at the open campaign, Document first', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    renderAppAt(workspacePath(campaign.id));
+    await waitFor(() => {
+      expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
+    });
+    // Document is the FIRST tab (the campaign's ONE document, docs/17 row 389).
+    const tabs = within(screen.getByTestId('campaign-bar')).getAllByRole('link');
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Document',
+      'Workspace',
+      'Graph',
+      'Spells',
+    ]);
+    expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
+      'href',
+      workspacePath(campaign.id),
+    );
+    // Scoped to the campaign bar: the top bar ALSO carries a "Document" link
+    // (the old New Module door, now a navigation entry — docs/17 row 389).
+    expect(
+      within(screen.getByTestId('campaign-bar')).getByRole('link', { name: 'Document' }),
+    ).toHaveAttribute('href', documentPath(campaign.id));
+    expect(screen.getByRole('link', { name: 'Graph' })).toHaveAttribute(
+      'href',
+      graphPath(campaign.id),
+    );
+    expect(screen.getByRole('link', { name: 'Spells' })).toHaveAttribute(
+      'href',
+      spellsPath(campaign.id),
+    );
+  });
+
+  // docs/17 row 182: the campaign-scoped spell route must be PINNED into
+  // `campaignIdFromPath`, or the campaign bar renders campaign-less (its
+  // tabs, New Module and the switcher all read that one function).
+  it('campaignIdFromPath recognizes the spell route', () => {
+    expect(campaignIdFromPath('/c/x/spells')).toBe('x');
+    expect(campaignIdFromPath(spellsPath('x'))).toBe('x');
+    // A non-campaign route still answers undefined.
+    expect(campaignIdFromPath(ROUTES.rules)).toBeUndefined();
+  });
+});
+
+describe('last-module shortcut (top bar)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedSettledOnboarding();
+  });
+
+  it('is hidden while no module reader has been opened (lastModule null)', async () => {
+    renderAppAt(ROUTES.campaignPicker);
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByTestId('topbar-last-module')).not.toBeInTheDocument();
+  });
+
+  it('shows the last module name and navigates to its reader', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await saveSettings({
+      ...defaultSettings(),
+      onboarding: { status: 'complete', stepState: [] },
+      lastModule: { campaignId: campaign.id, moduleId: module.id, name: module.title },
+    });
+
+    renderAppAt(ROUTES.campaignPicker);
+    const shortcut = await screen.findByTestId('topbar-last-module');
+    expect(shortcut).toHaveAttribute('href', modulePath(campaign.id, module.id));
+    expect(within(shortcut).getByText('The Drowned Vault')).toBeInTheDocument();
+
+    await userEvent.setup().click(shortcut);
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(modulePath(campaign.id, module.id));
+    });
+    expect(screen.getByTestId('module-reader')).toBeInTheDocument();
+  });
+});
+
+describe('campaign bar breadcrumb', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedSettledOnboarding();
+  });
+
+  it('shows Campaigns / Document / title on the module reader route', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: 'A flooded vault beneath a watchtower.',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'standard',
+      }),
+    );
+
+    renderAppAt(`/c/${campaign.id}/m/${module.id}`);
+
+    const crumb = await screen.findByTestId('campaign-crumb', {}, { timeout: 10_000 });
+    expect(crumb).toHaveTextContent('Campaigns');
+    expect(within(crumb).getByRole('link', { name: 'Document' })).toHaveAttribute(
+      'href',
+      documentPath(campaign.id),
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    });
+    expect(within(crumb).queryByText('Battle table')).not.toBeInTheDocument();
+  });
+
+  it('appends the Battle table step on the battle route', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: 'A flooded vault beneath a watchtower.',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'standard',
+      }),
+    );
+
+    // The route names the ENCOUNTER (docs/17 row 254); the crumb is orientation
+    // for the screen you are on, not a module-wide battle entry.
+    renderAppAt(`/c/${campaign.id}/m/${module.id}/battle/${crypto.randomUUID()}`);
+
+    const crumb = await screen.findByTestId('campaign-crumb', {}, { timeout: 10_000 });
+    expect(crumb).toHaveTextContent('Battle table');
+    // The module title arrives one live-query tick after the crumb mounts
+    // (it renders as '…' first).
+    await waitFor(() => {
+      expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    });
+  });
+});
+
+describe('theme toggle', () => {
+  it('defaults to the dark theme and persists it', () => {
+    renderAppAt(ROUTES.campaignPicker);
+
+    expect(useThemeStore.getState().theme).toBe('dark');
+    expect(document.documentElement).toHaveClass('dark');
+    expect(persistedTheme()).toBe('dark');
+  });
+
+  it('toggles dark → light → dark and applies it to the document', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(screen.getByRole('button', { name: 'Switch to light theme' }));
+
+    expect(useThemeStore.getState().theme).toBe('light');
+    expect(document.documentElement).not.toHaveClass('dark');
+    expect(document.documentElement.style.colorScheme).toBe('light');
+    expect(persistedTheme()).toBe('light');
+
+    await user.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
+
+    expect(useThemeStore.getState().theme).toBe('dark');
+    expect(document.documentElement).toHaveClass('dark');
+  });
+});
+
+describe('generation language select', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedSettledOnboarding();
+  });
+
+  it('is choosable on the main page and persists the choice in settings', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(
+      await screen.findByLabelText('Generation language', {}, { timeout: 5_000 }),
+    );
+    await user.click(
+      await screen.findByRole('option', { name: 'Deutsch (German)' }, { timeout: 5_000 }),
+    );
+
+    await waitFor(async () => {
+      const { readSettings } = await import('@/db/settingsRepo');
+      expect((await readSettings()).language).toBe('de');
+    });
+
+    // The choice survives a re-render (value read back from settings).
+    await waitFor(() => {
+      expect(screen.getByLabelText('Generation language')).toHaveTextContent('Deutsch');
+    });
+  });
+});

@@ -1,0 +1,48 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+import '@/index.css';
+import { App } from '@/app/App';
+import { SERVICE_WORKER_VERSION, serviceWorkerUrl } from '@/lib/serviceWorker';
+// Ratified: post-run post-create extras — subscribe to run completion ONCE.
+import '@/features/campaign/post-run-extras';
+
+// Built-in personas are seeded (insert-if-missing) from AppShell's mount
+// effect so a seeding failure surfaces as a visible toast — console-only
+// errors are forbidden (00-OVERVIEW §Global conventions).
+
+const rootElement = document.getElementById('root');
+
+if (!rootElement) {
+  throw new Error('Root element #root not found — check index.html.');
+}
+
+createRoot(rootElement).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+
+// Service worker (05-UI.md §Tablet): caches the built app shell so a reload
+// works offline and the installed home-screen app starts instantly. Data
+// lives in IndexedDB and is untouched. Production only — under `vite dev` a
+// SW would serve stale pre-bundle chunks.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // VERSIONED url, relative to the Vite base so non-root deployments scope
+  // correctly (docs/17 row 379). `sw.js` is a fixed filename and this host's
+  // CDN caches it for hours while ignoring a client `no-cache`, so a shipped
+  // worker change reaches a browser ONLY through a url whose name changes —
+  // `serviceWorkerUrl` appends the build-time content hash. An unchanged
+  // worker keeps its url. The query does not change the worker's scope, so a
+  // changed script url for the same scope is an ordinary update: no second
+  // registration, no second worker, no unregister step.
+  const swUrl = serviceWorkerUrl(import.meta.env.BASE_URL, SERVICE_WORKER_VERSION);
+  void navigator.serviceWorker.register(swUrl).catch((error: unknown) => {
+    // Offline support is an enhancement; a registration failure must not
+    // break startup, but it must not vanish silently either — the global
+    // error boundary reports it.
+    window.dispatchEvent(
+      new ErrorEvent('error', { message: `Service worker registration failed: ${String(error)}` }),
+    );
+  });
+}

@@ -1,0 +1,143 @@
+import { z } from 'zod';
+
+import { BaseEntitySchema } from '@/domain/entity';
+import { gameSystemSchema } from '@/domain/gameSystem';
+import { itemDataSchema } from '@/domain/itemData';
+import { spellDataSchema } from '@/domain/spellData';
+import { statBlockSchema } from '@/domain/statblock';
+
+export const rulebookStatusSchema = z.enum(['processing', 'ready', 'error']);
+
+export type RulebookStatus = z.infer<typeof rulebookStatusSchema>;
+
+export const rulebookOriginSchema = z.enum(['pdf', 'pack']);
+
+export type RulebookOrigin = z.infer<typeof rulebookOriginSchema>;
+
+/**
+ * Import report of a bestiary pack book (12-BESTIARY-PACKS §4): the adapter
+ * that produced it, its license string (shown in the UI), and the per-entry
+ * outcome counts. `null` for PDF books.
+ */
+export const packMetaSchema = z.object({
+  /** Adapter id that produced the import, e.g. 'foundry-pf2e'. */
+  sourceId: z.string().min(1),
+  /** License string shown in the UI, taken verbatim from the adapter. */
+  license: z.string(),
+  entriesImported: z.number().int().nonnegative(),
+  /** Non-creature documents skipped by design (folders, non-NPC docs). */
+  entriesSkipped: z.number().int().nonnegative(),
+  /** Entries that failed creature mapping/validation (reported, never silent). */
+  entriesFailed: z.number().int().nonnegative(),
+  /**
+   * Valid item entries in this book (12-BESTIARY-PACKS §13, the item-corpus
+   * arc) — absent on pack books imported before the arc; new imports always
+   * write it. Optional, so old rows parse unchanged. `entriesImported`
+   * counts both lanes.
+   */
+  itemsImported: z.number().int().nonnegative().optional(),
+  /**
+   * Valid rules-text entries in this book (docs/12 §15, the rules-text packs
+   * arc) — journal pages, conditions, feats, spells, actions, class features
+   * landing as `section`/`spell` chunks. Optional, so old rows parse
+   * unchanged; `entriesImported` counts all three lanes.
+   */
+  sectionsImported: z.number().int().nonnegative().optional(),
+  // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
+  // file imports; all optional, so old backups parse unchanged (no migration).
+  /** The ref the pack was ACTUALLY imported from: 'HEAD' (newest) or the
+   *  pinned verified ref when the chain fell back (16 §1.1 amendment). */
+  sourceRef: z.string().min(1).optional(),
+  /** Human-browsable upstream URL of the fetched pack. */
+  sourceUrl: z.string().min(1).optional(),
+  /** When the pack was downloaded (epoch ms). */
+  fetchedAt: z.number().int().positive().optional(),
+  /** The ref chain that produced this book, in attempt order (16 §1.1
+   *  amendment): ['HEAD'] when the newest ref imported, ['HEAD', 'v14-dev']
+   *  when the fetch fell back to the verified snapshot. Additive + optional —
+   *  old backups parse unchanged. */
+  attemptedRefs: z.array(z.string().min(1)).optional(),
+});
+
+export type PackMeta = z.infer<typeof packMetaSchema>;
+
+/** The fetch-provenance subset, stamped by `packFetch` on fetched books. */
+export type PackProvenance = Pick<
+  PackMeta,
+  'sourceRef' | 'sourceUrl' | 'fetchedAt' | 'attemptedRefs'
+>;
+
+export const rulebookSchema = z.object({
+  ...BaseEntitySchema.shape,
+  /** User-editable; defaults to the PDF filename. */
+  title: z.string().min(1),
+  system: gameSystemSchema,
+  filename: z.string(),
+  pageCount: z.number().int().nonnegative(),
+  status: rulebookStatusSchema,
+  errorMessage: z.string(),
+  /** How the book entered the library: PDF ingest or bestiary pack import. */
+  origin: rulebookOriginSchema.default('pdf'),
+  /** Pack import report — null for PDF books (defaults keep old rows valid). */
+  packMeta: packMetaSchema.nullable().default(null),
+  // The original PDF bytes ARE retained at ingest (source-viewers arc) — in
+  // the separate `pdfFiles` table (`&bookId` unique), never on this row, so
+  // book-list reads stay light. Backups exclude the bytes (owner-ratified);
+  // books ingested before retention have no row (viewer absent state).
+});
+
+export type Rulebook = z.infer<typeof rulebookSchema>;
+
+export const chunkTypeSchema = z.enum(['section', 'statblock', 'table', 'item', 'spell']);
+
+export type ChunkType = z.infer<typeof chunkTypeSchema>;
+
+export const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/, 'SHA-256 hex digest');
+
+export const ruleChunkSchema = z.object({
+  ...BaseEntitySchema.shape,
+  bookId: z.uuid(),
+  /** 1-based inclusive page range. */
+  pageStart: z.number().int().positive(),
+  pageEnd: z.number().int().positive(),
+  chunkType: chunkTypeSchema,
+  /** e.g. ['Chapter 9: Combat', 'Grappling']. */
+  headingPath: z.array(z.string()),
+  /** Cleaned plain text of the chunk. */
+  text: z.string(),
+  /** Parsed, when chunkType === 'statblock'. */
+  statBlock: statBlockSchema.nullable(),
+  /**
+   * Parsed equipment/item payload, when chunkType === 'item' (12-BESTIARY-PACKS
+   * §13) — absent/null on every other chunk. `.nullish()` (not a default) is
+   * deliberate: chunks are read raw from Dexie in several repos, and rows
+   * written before this arc genuinely lack the key — the type must say so.
+   * No migration, no Dexie index change (`chunkType` is already indexed).
+   */
+  itemData: itemDataSchema.nullish(),
+  /**
+   * Parsed spell payload, when chunkType === 'spell' (docs/12 §15, the spells
+   * arc) — absent/null on every other chunk. `.nullish()` (not a default) for
+   * the item lane's exact reason: chunks are read raw from Dexie in several
+   * repos, and rows written before this arc are `chunkType: 'section'` with
+   * genuinely no key — the type must say so. No migration, no Dexie index
+   * change (`chunkType` is already indexed); a library written before the arc
+   * needs a re-import of the rules pack to gain structured spells, and nothing
+   * guesses one from the prose.
+   */
+  spellData: spellDataSchema.nullish(),
+  /** SHA-256 hex of `text`, for the embedding cache. */
+  contentHash: sha256HexSchema,
+});
+
+export type RuleChunk = z.infer<typeof ruleChunkSchema>;
+
+/**
+ * A chunk as produced by the ingestion worker: everything except identity,
+ * book linkage and timestamps, which the main thread adds when persisting
+ * (02-INGESTION.md "RuleChunkDraft").
+ */
+export type RuleChunkDraft = Omit<RuleChunk, 'id' | 'createdAt' | 'updatedAt' | 'bookId'>;
+
+/** Pre-hash chunk output of the pure chunker (worker computes contentHash). */
+export type UnhashedChunk = Omit<RuleChunkDraft, 'contentHash'>;

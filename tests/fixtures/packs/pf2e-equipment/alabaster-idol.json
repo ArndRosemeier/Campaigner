@@ -1,0 +1,32 @@
+{
+  "_id": "r7QGx0YFZCR0W5iu",
+  "name": "Alabaster idol",
+  "type": "treasure",
+  "img": "icons/commodities/treasure/statue-bust-stone-grey.webp",
+  "system": {
+    "level": {
+      "value": 0
+    },
+    "price": {
+      "value": {
+        "gp": 10
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "value": []
+    },
+    "description": {
+      "value": ""
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder GM Core"
+    },
+    "bulk": {
+      "value": 0
+    },
+    "rules": []
+  }
+}

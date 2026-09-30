@@ -1,0 +1,786 @@
+import 'fake-indexeddb/auto';
+
+import { type render, act, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { canvasPath } from '@/app/routes';
+import { createCampaign } from '@/db/campaignRepo';
+import { getModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
+import { listModuleVersions, snapshotModuleVersion } from '@/db/moduleVersionRepo';
+import {
+  assembleModuleDocument,
+  moduleDocumentFromView,
+  moduleDocumentSections,
+  createModule,
+  MODULE_VERSION_CAP,
+  modulePartSchema,
+  moduleSpineSchema,
+  type Id,
+} from '@/domain';
+import { activeCanvasView } from '@/features/modules/canvas/canvasView';
+import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
+import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
+import { useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
+import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
+import type * as LevelTextModule from '@/features/modules/levelText';
+import type * as ModuleRepoModule from '@/db/moduleRepo';
+import { clearDatabase } from '../db/helpers';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt, sendChat } from '../helpers/canvasPage';
+
+/**
+ * The canvas Versions menu (08-MODULE-DESIGNER §Module canvas versions, docs/18
+ * §2.3, docs/17 ledger row 63): the OWNER-VISIBLE simple undo. DURABLE
+ * whole-document snapshots taken BEFORE each AI change — listed newest-first
+ * with honest labels, restorable, all-cleatable for ONE module, and still there
+ * after a reload (the whole point; the session-only per-part ledger stays
+ * separate and labelled as such). Both chat apply modes are driven for real
+ * (editor + preview snapshot) through the real controller, split-save seam and
+ * Dexie; only the LLM and the toasts are mocked.
+ */
+
+vi.mock('@/lib/toast', () => ({
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastInfo: vi.fn(),
+}));
+
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, { chat: vi.fn() }),
+);
+
+vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  promoteSecondModuleUses: vi.fn(),
+}));
+
+vi.mock('@/features/modules/levelText', async (importOriginal) => {
+  const original = await importOriginal<typeof LevelTextModule>();
+  return {
+    ...original,
+    saveModuleLevelText: vi.fn(original.saveModuleLevelText),
+  };
+});
+
+/**
+ * The spine-subfield write is the ONE place a restore's premise lands
+ * (docs/17 row 357), so the loud-failure arm can make it fail without
+ * touching anything else. `importOriginal` keeps every other repo function
+ * the real one — only this seam is observable.
+ */
+vi.mock('@/db/moduleRepo', async (importOriginal) => {
+  const original = await importOriginal<typeof ModuleRepoModule>();
+  return {
+    ...original,
+    patchModuleSpine: vi.fn(original.patchModuleSpine),
+  };
+});
+
+const { chat } = await import('@/llm/openrouter');
+const chatMock = vi.mocked(chat);
+const { toastError, toastSuccess, toastInfo } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
+const toastSuccessMock = vi.mocked(toastSuccess);
+const toastInfoMock = vi.mocked(toastInfo);
+const patchModuleSpineMock = vi.mocked(patchModuleSpine);
+
+const PREMISE = 'A drowned vault premise.';
+const NEW_PREMISE = 'A premise rewritten by the model.';
+
+const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
+const PART_1_TEXT = 'The docks breathe fog.\n\nMist climbs the stairs.';
+
+const PART_PLAN = [
+  { title: 'The Gate Bargain', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+  { title: 'Under the Docks', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+  { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+];
+
+/** The WHOLE-module doc the seeded row holds (byte-exact pin). */
+/** The module DOCUMENT the seeded row holds (byte-exact pin, docs/17 row 384):
+ * level 0 is the PREMISE, then one section per planned level (level 3 empty). */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
+  ],
+});
+
+/** A reply that APPLIES one edit to part 1 (the pre-change text is WHOLE_DOC). */
+const APPLY_REPLY =
+  'Making it rainier.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>';
+
+/** A SECOND, distinct applied edit (the first reply's search is spent). */
+const APPLY_REPLY_TWO =
+  'Lowering the fog.\n<edit><search>Mist climbs the stairs.</search><replace>Mist swallows the stairs.</replace></edit>';
+
+let world: { campaignId: Id; moduleId: Id; otherModuleId: Id } = {
+  campaignId: '',
+  moduleId: '',
+  otherModuleId: '',
+};
+
+async function seedOneModule(campaignId: Id, title: string, createdAt: number): Promise<Id> {
+  const draft = createModule({
+    campaignId,
+    title,
+    concept: 'concept',
+    levelMin: 1,
+    levelMax: 2,
+    tone: '',
+    sizeDial: 'standard',
+    includePriorModules: false,
+  });
+  await saveModule({
+    ...draft,
+    createdAt,
+    spine: moduleSpineSchema.parse({
+      premise: 'A drowned vault premise.',
+      themes: [],
+      partPlan: PART_PLAN,
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: PART_0_TEXT,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+      modulePartSchema.parse({
+        planIndex: 1,
+        markdown: PART_1_TEXT,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  });
+  return draft.id;
+}
+
+async function seedWorld(): Promise<void> {
+  const campaign = await createCampaign({
+    name: 'Ember',
+    description: 'The ember war.',
+    system: 'dnd5e',
+  });
+  const moduleId = await seedOneModule(campaign.id, 'The Drowned Vault', 2);
+  // A SECOND module: its durable stack must survive the first one's clear.
+  const otherModuleId = await seedOneModule(campaign.id, 'The Second Vault', 3);
+  world = { campaignId: campaign.id, moduleId, otherModuleId };
+}
+
+beforeEach(async () => {
+  await clearDatabase();
+  vi.clearAllMocks();
+  useCanvasLedgerStore.setState({ ownerModuleId: null, byPart: {} });
+  useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
+  useCanvasPreviewStore.setState({ ownerModuleId: null, openByModule: {} });
+  await flushChatPersist();
+  await seedWorld();
+});
+
+function mockChatReply(raw: string): void {
+  chatMock.mockImplementation(() =>
+    Promise.resolve({ text: raw, modelUsed: 'test-model', fallback: null }),
+  );
+}
+
+/** Mounts the canvas and lands in EDIT mode (the default view is preview). */
+async function renderCanvasEditor(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<ReturnType<typeof render>> {
+  const view = renderAppAt(canvasPath(world.campaignId, world.moduleId));
+  await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+  if (screen.queryByTestId('canvas-chat') === null) {
+    await user.click(await screen.findByTestId('canvas-chat-toggle'));
+  }
+  if (screen.queryByTestId('canvas-preview') !== null) {
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+  }
+  await screen.findByTestId('canvas-editor');
+  await flushAsyncUpdates();
+  return view;
+}
+
+/** The default view: chat + live preview (no editor mounted). */
+async function renderCanvasPreview(): Promise<void> {
+  renderAppAt(canvasPath(world.campaignId, world.moduleId));
+  await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+  expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+  await flushAsyncUpdates();
+}
+
+/** The mocked chat for the canvasRefine contract (JSON replacement). */
+function mockChatReplyJson(replacement: string): void {
+  chatMock.mockImplementation((_messages, options) => {
+    const raw = JSON.stringify({ replacement });
+    options.onToken?.(raw);
+    return Promise.resolve({ text: raw, modelUsed: 'test-model', fallback: null });
+  });
+}
+
+function selectSpan(from: number, to: number): void {
+  act(() => {
+    activeCanvasView.current?.dispatch({ selection: { anchor: from, head: to } });
+  });
+}
+
+/** Runs the canvas instruction dialog for one AI action. */
+async function runInstruction(
+  user: ReturnType<typeof userEvent.setup>,
+  actionTestId: string,
+  text: string,
+): Promise<void> {
+  await user.click(screen.getByTestId(actionTestId));
+  const dialog = await screen.findByTestId('canvas-instruction-dialog');
+  await user.type(within(dialog).getByTestId('canvas-instruction-input'), text);
+  await user.click(within(dialog).getByTestId('canvas-instruction-confirm'));
+  await flushAsyncUpdates();
+}
+
+/** A hand edit at the given whole-doc range (CM6 dispatch — manual typing). */
+function editDoc(from: number, to: number, insert: string): void {
+  const view = activeCanvasView.current;
+  if (view === null) throw new Error('canvas editor view not mounted');
+  act(() => {
+    view.dispatch({ changes: { from, to, insert } });
+  });
+}
+
+async function versions(moduleId: Id = world.moduleId) {
+  return actDrained(() => listModuleVersions(moduleId));
+}
+
+async function partText(moduleId: Id, planIndex: number): Promise<string> {
+  const row = await actDrained(() => getModule(moduleId));
+  return row?.parts.find((part) => part.planIndex === planIndex)?.markdown ?? '';
+}
+
+async function rowDocument(moduleId: Id): Promise<string> {
+  const row = await actDrained(() => getModule(moduleId));
+  if (row === undefined) throw new Error('module row missing');
+  return moduleDocumentFromView({ spine: row.spine, parts: row.parts });
+}
+
+async function openVersionsMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByTestId('canvas-versions'));
+  return screen.findByTestId('canvas-saved-versions-label');
+}
+
+describe('durable versions — snapshot BEFORE every AI change', () => {
+  it('editor-chat apply snapshots the byte-exact WHOLE document as it stood before the batch', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    expect(await versions()).toHaveLength(0);
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+
+    const saved = await versions();
+    expect(saved).toHaveLength(1);
+    // BYTE-EXACT pre-change text: the whole document, not the changed part.
+    expect(saved[0]?.docText).toBe(WHOLE_DOC);
+    expect(saved[0]?.source).toBe('chat');
+    expect(saved[0]?.label).toBe('Chat: make the rain heavier');
+    // The change itself landed (so the snapshot is genuinely a pre-change state).
+    expect(await partText(world.moduleId, 0)).toContain('Rain drowns every word.');
+    expect(await rowDocument(world.moduleId)).not.toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('preview-snapshot chat apply (no CM history) snapshots the pre-change document too', async () => {
+    const user = userEvent.setup();
+    await renderCanvasPreview();
+    expect(await versions()).toHaveLength(0);
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+
+    const saved = await versions();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.docText).toBe(WHOLE_DOC);
+    expect(saved[0]?.source).toBe('chat');
+    expect(saved[0]?.label).toBe('Chat: make the rain heavier');
+    expect(await partText(world.moduleId, 0)).toContain('Rain drowns every word.');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('an accepted Refine proposal snapshots the pre-change document (source: refine)', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const part0From = sections[1]?.textFrom ?? 0;
+    // The refine reply is the canvasRefine JSON contract (plain replacement).
+    mockChatReplyJson('The party bargains harder than ever.');
+    selectSpan(part0From + 4, part0From + 9); // "party" in part 1
+    await runInstruction(user, 'canvas-refine-selection', 'make the bargain harder');
+    await user.click(await screen.findByTestId('canvas-suggestion-accept'));
+    await flushAsyncUpdates();
+
+    const saved = await versions();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.source).toBe('refine');
+    expect(saved[0]?.label).toBe('Refine: make the bargain harder');
+    // BYTE-EXACT pre-change text — the whole document, taken before the write.
+    expect(saved[0]?.docText).toBe(WHOLE_DOC);
+    expect(toastSuccessMock).toHaveBeenCalledWith('Proposal applied');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('a manual hand edit + Save never snapshots (CM6 undo covers hand typing)', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    editDoc(0, 3, 'The');
+    act(() => {
+      screen.getByTestId('canvas-save').click();
+    });
+    await flushAsyncUpdates();
+
+    expect(await versions()).toHaveLength(0);
+    // The hand edit really landed (a no-op save would make the assertion empty).
+    expect(await partText(world.moduleId, 0)).toContain('The party bargains');
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('the Versions menu tells the truth about what each entry is', () => {
+  it('lists durable versions newest-first with source + label + timestamp, states the retention, and keeps the session list labelled session-only', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    mockChatReply(APPLY_REPLY_TWO);
+    await sendChat(user, 'and lower the fog');
+
+    const saved = await versions();
+    expect(saved).toHaveLength(2);
+
+    const label = await openVersionsMenu(user);
+    // The retention is stated, never a silent cap.
+    expect(label).toHaveTextContent(
+      `Saved versions — the whole document as it was BEFORE each AI change (keeping the most recent ${String(MODULE_VERSION_CAP)})`,
+    );
+    expect(label).toHaveTextContent('BEFORE each AI change');
+    // Honest per-entry labels: the change the snapshot precedes, its kind, and
+    // when it was taken — newest first.
+    const entries = screen.getAllByTestId(/^canvas-saved-version-/);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toHaveTextContent('Chat: and lower the fog');
+    expect(entries[1]).toHaveTextContent('Chat: make the rain heavier');
+    expect(entries[0]).toHaveTextContent('Chat ·');
+    // The DURABLE section never claims to be session state…
+    expect(screen.getByTestId('canvas-saved-versions-label').textContent).not.toContain('session');
+    // …and the SESSION list is still explicitly session-only (never mistakable
+    // for the durable stack: no two conflicting ideas of what an entry is).
+    expect(screen.getByText('Session versions — this session only, die on reload')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('says so honestly when nothing has been snapshotted yet', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await openVersionsMenu(user);
+    expect(screen.getByTestId('canvas-saved-versions-empty')).toHaveTextContent(
+      'No saved versions yet',
+    );
+    // Nothing to clear: the destructive item is disabled, not a broken promise.
+    expect(screen.getByTestId('canvas-versions-clear')).toHaveAttribute('aria-disabled', 'true');
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('restore — byte-identical text, and the restore itself is undoable', () => {
+  it('restores the snapshot through the SAME proposal/save path and snapshots the pre-restore state', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+
+    const saved = await versions();
+    expect(saved).toHaveLength(1);
+    const target = saved[0];
+    if (target === undefined) throw new Error('snapshot missing');
+    const postChatDoc = await rowDocument(world.moduleId);
+    expect(postChatDoc).not.toBe(WHOLE_DOC);
+
+    // The menu entry offers the restore; accepting it is the existing AI
+    // proposal path (Apply), never a side-door row write.
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('canvas-proposal-apply')).toBeInTheDocument();
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(postChatDoc);
+
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // Byte-identical: the editor AND the row now hold exactly the snapshot.
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    expect(await partText(world.moduleId, 0)).toBe(PART_0_TEXT);
+    expect(toastSuccessMock).toHaveBeenCalledWith('Version restored');
+
+    // The restore was itself snapshotted: the pre-restore text is on top of
+    // the stack, so a wrong restore is recoverable.
+    const after = await versions();
+    expect(after).toHaveLength(2);
+    expect(after[0]?.source).toBe('restore');
+    expect(after[0]?.label).toContain('Restore from');
+    expect(after[0]?.docText).toBe(postChatDoc);
+    expect(after[1]?.docText).toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('refuses loudly (and writes nothing) when the editor is not mounted in preview', async () => {
+    const user = userEvent.setup();
+    await renderCanvasPreview();
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    const before = await versions();
+    expect(before).toHaveLength(1);
+
+    await openVersionsMenu(user);
+    const target = before[0];
+    if (target === undefined) throw new Error('snapshot missing');
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+
+    expect(toastInfoMock).toHaveBeenCalledWith(
+      'Switch back to Edit to restore a saved version — the editor is not mounted in preview.',
+    );
+    // Nothing proposed, nothing written, no extra snapshot.
+    expect(await rowDocument(world.moduleId)).not.toBe(WHOLE_DOC);
+    expect(await versions()).toHaveLength(1);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('refuses a version whose saved document no longer parses instead of proposing it', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'),
+    );
+    const [saved] = await versions();
+    if (saved === undefined) throw new Error('snapshot missing');
+    const { db } = await import('@/db/db');
+    // The saved text no longer parses: it carries a level-header LOOKALIKE,
+    // which the parser refuses by line (docs/23 §3). The pre-document version
+    // of this pin refused a different PLAN; the document has no plan to
+    // contradict, so the honest successor is the parse itself.
+    await actDrained(() =>
+      db.moduleVersions.update(saved.id, {
+        docText: 'A premise.\n\n=====Level 1=====\n=====level 2=====\nProse.',
+      }),
+    );
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${saved.id}`));
+    await flushAsyncUpdates();
+
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not restore that version — its saved document no longer parses.',
+      expect.anything(),
+    );
+    // No proposal was raised and the document is untouched.
+    expect(screen.queryByTestId('canvas-proposal-apply')).not.toBeInTheDocument();
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('REFUSES a LEGACY parts-document version by name — it would be misread as ONE level', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'),
+    );
+    const [saved] = await versions();
+    if (saved === undefined) throw new Error('snapshot missing');
+    const { db } = await import('@/db/db');
+    // A row written before docs/17 row 384: the `==========` parts document,
+    // whose text is plain text that would PARSE as a module document with
+    // exactly one level (the whole thing read as the premise). The
+    // discriminator is what makes the refusal possible — without it the
+    // restore would silently replace the module with one giant premise.
+    await actDrained(() =>
+      db.moduleVersions.update(saved.id, {
+        docText: '[Part 1 of 9 — Somewhere Else]\n\nold text',
+        documentFormat: 'parts-document',
+      }),
+    );
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${saved.id}`));
+    await flushAsyncUpdates();
+
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not restore that version — it was saved in the old parts-document format, which is not the module document. Its text cannot be read as one and restoring it would damage the module.',
+      expect.anything(),
+    );
+    expect(screen.queryByTestId('canvas-proposal-apply')).not.toBeInTheDocument();
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('the version carries the PREMISE too — the owner\u2019s "Please make undoable" (docs/17 row 357)', () => {
+  /** A row written BEFORE the field existed: the key is ABSENT (constructed
+   * explicitly — the tolerance is proven, not assumed). */
+  async function putPreChangeRow(input: {
+    id: string;
+    createdAt: number;
+    label: string;
+  }): Promise<void> {
+    const { db } = await import('@/db/db');
+    await actDrained(() =>
+      db.moduleVersions.put({
+        id: input.id,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        moduleId: world.moduleId,
+        source: 'chat',
+        label: input.label,
+        docText: WHOLE_DOC,
+        // The row PREDATES the `premise` field, but it is a module document
+        // (docs/17 row 384): the discriminator says so explicitly, because
+        // anything else is refused on restore.
+        documentFormat: 'module-document',
+      } as never),
+    );
+  }
+
+  it("restores BOTH halves: the premise AND the parts are back to their pre-change bytes", async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+
+    // The pre-change state, through the ONE snapshot seam the adversarial
+    // premise pass calls BEFORE its edit.
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Adversarial pass: premise'),
+    );
+    const [target] = await versions();
+    if (target === undefined) throw new Error('snapshot missing');
+    expect(target.premise).toBe(PREMISE);
+    expect(target.docText).toBe(WHOLE_DOC);
+
+    // The AI change lands: a chat batch rewrites a part AND the model rewrites
+    // the premise (the adversarial pass's write).
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    await actDrained(() => patchModuleSpine(world.moduleId, { premise: NEW_PREMISE }));
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(NEW_PREMISE);
+    expect(await rowDocument(world.moduleId)).not.toBe(WHOLE_DOC);
+
+    // Restore the saved version through the SAME menu → proposal → accept path.
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // THE OWNER'S JOURNEY: both halves back. The premise assertion is the one
+    // that fails without the premise half of the undo.
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(PREMISE);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    expect(await partText(world.moduleId, 0)).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(toastSuccessMock).toHaveBeenCalledWith('Version restored');
+
+    // The restore is itself undoable — and its snapshot keeps the NEWER premise.
+    const after = await versions();
+    expect(after[0]?.source).toBe('restore');
+    expect(after[0]?.premise).toBe(NEW_PREMISE);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('a version row from BEFORE the premise field still restores the premise — the DOCUMENT carries it', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await putPreChangeRow({ id: '00000000-0000-4000-8000-000000000358', createdAt: 5, label: 'Chat: older than the field' });
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    await actDrained(() => patchModuleSpine(world.moduleId, { premise: NEW_PREMISE }));
+
+    await openVersionsMenu(user);
+    await user.click(
+      screen.getByTestId('canvas-saved-version-00000000-0000-4000-8000-000000000358'),
+    );
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // THE CLAIM REVERSED (docs/17 rows 357 → 384). This pin used to assert the
+    // premise was LEFT AS IT STANDS, because the legacy parts document excluded
+    // it and a row without the `premise` field had no capture to apply. The
+    // module document CONTAINS the premise (level 0), so the document restore
+    // brings it back whatever the row's own field says — and the field is now
+    // the Versions menu's display record, not a second half the restore needs.
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(PREMISE);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('fails LOUDLY and writes NO part when the stored premise cannot be put back', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Adversarial pass: premise'),
+    );
+    const [target] = await versions();
+    if (target === undefined) throw new Error('snapshot missing');
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    const postChatDoc = await rowDocument(world.moduleId);
+    expect(postChatDoc).not.toBe(WHOLE_DOC);
+
+    patchModuleSpineMock.mockRejectedValueOnce(new Error('the vault is sealed'));
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // LOUD, specific, and never a success: the whole restore aborted before a
+    // single part was written, so there is no half-restored document.
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not restore that version — its saved premise could not be put back, so nothing was restored.',
+      expect.anything(),
+    );
+    expect(toastSuccessMock).not.toHaveBeenCalledWith('Version restored');
+    expect(await rowDocument(world.moduleId)).toBe(postChatDoc);
+    expect(await partText(world.moduleId, 0)).not.toBe(PART_0_TEXT);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('distinguishes an entry that carries a premise from one that predates the field', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() => snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'));
+    await putPreChangeRow({ id: '00000000-0000-4000-8000-000000000359', createdAt: 99, label: 'Chat: older than the field' });
+
+    const saved = await versions();
+    const withPremise = saved.find((entry) => entry.premise !== null);
+    const without = saved.find((entry) => entry.premise === null);
+    if (withPremise === undefined || without === undefined) {
+      throw new Error('both a premise-carrying and a predating entry must be listed');
+    }
+
+    await openVersionsMenu(user);
+    const carrying = screen.getByTestId(`canvas-saved-premise-${withPremise.id}`);
+    expect(carrying).toHaveTextContent(`premise: ${PREMISE}`);
+
+    const predating = screen.getByTestId(`canvas-saved-premise-${without.id}`);
+    expect(predating).toHaveTextContent('no premise captured');
+    expect(predating).not.toHaveTextContent('premise:');
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('clear all previous versions', () => {
+  it('deletes nothing until confirmed, then empties THIS module only and leaves the document alone', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    mockChatReply(APPLY_REPLY_TWO);
+    await sendChat(user, 'and lower the fog');
+    // A second module's stack (untouched by this module's clear).
+    await actDrained(() => snapshotModuleVersion(world.otherModuleId, 'generation', 'Generate parts'));
+
+    const before = await versions();
+    expect(before).toHaveLength(2);
+    const rowDocBefore = await rowDocument(world.moduleId);
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId('canvas-versions-clear'));
+    const dialog = await screen.findByTestId('canvas-versions-clear-dialog');
+    // Destructive-confirmed, and the copy says exactly what goes and what stays.
+    const copy = screen.getByTestId('canvas-versions-clear-description').textContent;
+    expect(copy).toContain('all 2 saved versions of THIS campaign\'s document');
+    expect(copy).toContain('NOT cleared');
+    expect(copy).toContain('DOCUMENT TEXT');
+    expect(copy).toContain('no version is saved first');
+
+    // Nothing deleted until the confirm — cancel keeps the stack.
+    expect(await versions()).toHaveLength(2);
+    await user.click(within(dialog).getByTestId('canvas-versions-clear-cancel'));
+    await flushAsyncUpdates();
+    expect(await versions()).toHaveLength(2);
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId('canvas-versions-clear'));
+    await screen.findByTestId('canvas-versions-clear-dialog');
+    await user.click(screen.getByTestId('canvas-versions-clear-confirm'));
+    await flushAsyncUpdates();
+
+    expect(await versions()).toHaveLength(0);
+    // Second module's history survived (module-keyed sweep)…
+    expect(await versions(world.otherModuleId)).toHaveLength(1);
+    // …the document text is untouched (a version clear is not an undo)…
+    expect(await rowDocument(world.moduleId)).toBe(rowDocBefore);
+    // …the clear created no snapshot of its own…
+    expect(await versions()).toHaveLength(0);
+    // …and the success toast is loud and exact.
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Cleared 2 saved versions for this module — the document text was not changed',
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('persistence — the whole point', () => {
+  it('still lists the versions after a reload-equivalent remount (while the session ledger goes back to empty)', async () => {
+    const user = userEvent.setup();
+    const { unmount } = await renderCanvasEditor(user);
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    const saved = await versions();
+    expect(saved).toHaveLength(1);
+    const target = saved[0];
+    if (target === undefined) throw new Error('snapshot missing');
+    expect(
+      useCanvasLedgerStore.getState().byPart[`${world.moduleId}#0`]?.versions,
+    ).toHaveLength(1);
+
+    // Reload-equivalent: unmount, drop every session store, remount.
+    unmount();
+    useCanvasLedgerStore.setState({ ownerModuleId: null, byPart: {} });
+    useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
+    useCanvasPreviewStore.setState({ ownerModuleId: null, openByModule: {} });
+    await actDrained(() => flushChatPersist(canvasChatKey(world.moduleId)));
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await flushAsyncUpdates();
+
+    await openVersionsMenu(user);
+    const entries = screen.getAllByTestId(/^canvas-saved-version-/);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toHaveTextContent('Chat: make the rain heavier');
+    expect(entries[0]).toHaveAttribute('data-testid', `canvas-saved-version-${target.id}`);
+    // The session ledger is honestly empty again — and its section says WHY.
+    expect(screen.getByTestId('canvas-versions-empty')).toBeInTheDocument();
+    expect(
+      screen.getByText('Session versions — this session only, die on reload'),
+    ).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 30_000);
+});

@@ -1,0 +1,350 @@
+import { comparableName } from '@/domain/artifactAlias';
+import type { GameSystem } from '@/domain/gameSystem';
+import type { AnyArtifact, Id, Rulebook, RuleChunk } from '@/domain';
+import { listChunksByBooks } from '@/db/chunkRepo';
+import { listRulebooks } from '@/db/rulebookRepo';
+import { errorMessage } from '@/lib/errors';
+
+/**
+ * Encounter roster index (12-BESTIARY-PACKS §7): a compact "name (level,
+ * traits)" listing of every imported pack creature for the campaign's
+ * system, injected into the Encounter Smith's prompt so it picks real
+ * bestiary entries (cited by exact `sourceName`) instead of inventing names.
+ * The 300-line PROMPT WINDOW is ordered by level distance to the run's
+ * target level when one exists (ratified §7 amendment), so a huge bestiary
+ * import surfaces creatures that could actually threaten the party instead
+ * of the first 300 low-CR entries; without a target the order stays
+ * level/name ascending. Pure selection/formatting here; the run-engine
+ * wiring is M-B.
+ */
+
+export const ROSTER_LIMIT = 300;
+
+export interface PackRosterEntry {
+  name: string;
+  level: string;
+  traits: string;
+  chunkId: Id;
+  levelSort: number;
+  /** Owning pack book — drives deterministic duplicate-name resolution. */
+  bookId: Id;
+  /** The owning pack book's title — the duplicate-name line suffix (fix-02 decision 5). */
+  bookTitle: string;
+}
+
+export interface PackRoster {
+  lines: string[];
+  total: number;
+  truncated: number;
+}
+
+/**
+ * KEY SPACE `PACK_POOL_NAME_KEY` (docs/17 row 167): the prompt roster window's
+ * printed creature name and the model's `sourceName` are ONE key — `comparableName`
+ * of the name, the pack's OWN spelling. Distinct from `MODULE_NAME_KEY` below in
+ * this file's sibling (`llm/roomBudget`), which keys a name of something the
+ * MODULE holds: these two are NOT interchangeable, and a spelling-variant index
+ * must never be conflated with a creature identity.
+ *
+ * Case-insensitive exact name → chunkId index over the roster (§7). Duplicate
+ * names resolve deterministically: the most recently updated pack book wins
+ * (`bookRank` is 0-based by recency — `listRulebooks` returns that order),
+ * then the level/name-sorted order inside a book. The origin badge names the
+ * book (§8), so a duplicate pick stays visible to the user.
+ */
+export function rosterNameIndex(
+  entries: readonly PackRosterEntry[],
+  bookRank: ReadonlyMap<Id, number> = new Map(),
+): Map<string, Id> {
+  const index = new Map<string, Id>();
+  const rankOf = (entry: PackRosterEntry): number => bookRank.get(entry.bookId) ?? Number.MAX_SAFE_INTEGER;
+  const sorted = [...entries].sort(
+    (a, b) => rankOf(a) - rankOf(b) || a.levelSort - b.levelSort || a.name.localeCompare(b.name),
+  );
+  for (const entry of sorted) {
+    const key = comparableName(entry.name);
+    if (!index.has(key)) index.set(key, entry.chunkId);
+  }
+  return index;
+}
+
+/** Prompt section (§7): the roster listing plus the citation instruction. */
+export function formatRosterSection(lines: readonly string[], truncated: number): string | null {
+  if (lines.length === 0) return null;
+  return [
+    'Bestiary roster — creatures available in the imported pack books:',
+    ...lines,
+    truncated > 0 ? `(roster truncated; ${String(truncated)} more)` : null,
+    'For each monster: cite a stat-block excerpt via "sourceChunkIndex", or pick a creature from this roster by its exact name via "sourceName" (the creature name itself — never the parenthesized level/traits or a " — book" suffix), or output an inline "statBlock".',
+  ]
+    .filter((part) => part !== null)
+    .join('\n');
+}
+
+/**
+ * Numeric ordering key for printed d20 levels: "3", "-1", "1/2", "1/4".
+ * The dnd5e system prints "—" for the CR-less summons (avatar of death,
+ * animated objects — `details.cr: null`), which sort after every leveled
+ * creature: their exact printed level IS "—", and they are temporary extras.
+ */
+export function parseLevelSort(level: string): number {
+  const trimmed = level.trim();
+  if (trimmed === '—') return Number.POSITIVE_INFINITY;
+  const fraction = /^(-?\d+)\s*\/\s*(\d+)$/.exec(trimmed);
+  if (fraction !== null) {
+    const numerator = fraction[1];
+    const denominator = fraction[2];
+    if (numerator !== undefined && denominator !== undefined && Number(denominator) !== 0) {
+      return Number(numerator) / Number(denominator);
+    }
+  }
+  const value = Number(trimmed);
+  if (trimmed !== '' && Number.isFinite(value)) return value;
+  throw new Error(`cannot order creatures by level "${level}"`);
+}
+
+/**
+ * The PRINTED level a stat block states, read through the ONE level grammar
+ * (`parseLevelSort`), or `undefined` when it states none (docs/17 row 282).
+ *
+ * WHY THIS EXISTS. Two surfaces answered "what level is this mob" two ways: the
+ * entity panel's chip printed the module's RECORDED `levelHint` (a generation
+ * input) as if it were a fact, while the stat-block card printed its own raw
+ * string — so a levels-1–2 module whose premise mentioned one level-7 gnome
+ * showed `level 7` on every npc beside minted level-1 blocks. The stat block is
+ * the one truth about a mob's level, and BOTH surfaces read it through HERE.
+ *
+ * A level the grammar cannot read is NOT a level and is never presented as one:
+ * this returns `undefined` for it, exactly as for a blank level, and `'—'` (the
+ * dnd5e summons' printed "no CR") reads as none too — it is an ORDERING
+ * sentinel (+Infinity), never a number a chip or a generator may carry. That is
+ * a DISPLAY decision (the raw value stays in the stored block and in the editor
+ * form), never a substituted value: nothing is invented to stand in for it.
+ */
+export function mobLevelText(level: string): string | undefined {
+  const trimmed = level.trim();
+  if (trimmed === '') return undefined;
+  return Number.isFinite(parseLevelSort(trimmed)) ? trimmed : undefined;
+}
+
+/**
+ * The level a mob's OWN minted stat block states, off the artifact that holds
+ * it (docs/17 row 282) — `undefined` when the artifact has no stat block at all
+ * (an encounter, a location, a blockless npc stub) or its block states no
+ * readable level. ONE read for the chip, the stat-block card and the run
+ * engine's level resolution, so no surface can answer this question its own way
+ * (AGENTS rule 4).
+ */
+export function mobLevelFor(artifact: AnyArtifact): string | undefined {
+  if (artifact.kind !== 'npc' && artifact.kind !== 'pc') return undefined;
+  return mobLevelText(artifact.data.statBlock?.level ?? '');
+}
+
+/**
+ * The ORDERING KEY of a LIBRARY CREATURE's own stat block level — the
+ * creature-shaped sibling of `mobLevelFor` (which reads an ARTIFACT), for the
+ * level-aware cast resolution (docs/17 row 302).
+ *
+ * It is the SAME ONE grammar, composed rather than restated: `mobLevelText`
+ * decides whether the printed `statBlock.level` IS a level (blank and the
+ * summons' `'—'` read as none, and are therefore never "at" any recorded level)
+ * and `parseLevelSort` turns it into the comparable key the creator roster
+ * already orders by. The seam that filters candidates by level takes this
+ * reader INJECTED (`domain/libraryCreature` may not import `llm/**` — it must
+ * stay a tx-callable leaf, docs/18 §1), so a second grammar has nowhere to be
+ * born: the only reader in `src/` is this one, and its only caller is the live
+ * cast wrapper.
+ */
+export function libraryCreatureLevelSort(creature: {
+  statBlock: RuleChunk['statBlock'];
+}): number | undefined {
+  const printed = mobLevelText(creature.statBlock?.level ?? '');
+  return printed === undefined ? undefined : parseLevelSort(printed);
+}
+
+/**
+ * Distance from the window's target level (`levelDistanceTo`). The CR-less "—"
+ * creatures (`levelSort` +Infinity) sit at +Infinity so they always sort after
+ * every leveled creature, exactly as today — the guard keeps `∞ − ∞` from
+ * becoming a NaN comparator result when two of them tie.
+ */
+export function levelDistanceTo(levelSort: number, targetLevel: number): number {
+  return Number.isFinite(levelSort) ? Math.abs(levelSort - targetLevel) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The ONE level-distance ordering key of a prompt window (ratified §7
+ * amendment): `|levelSort − target|` ascending, ties by `levelSort` ascending,
+ * then by locale name. Two windows — the encounter roster's pack listing and
+ * the module creator's LIBRARY listing (docs/17 row 114) — sort through this
+ * function, so "ordered by level distance to the target" cannot come to mean
+ * two different orders.
+ */
+export function libraryLevelOrder<T extends { name: string; levelSort: number }>(
+  targetLevel: number,
+): (left: T, right: T) => number {
+  return (left, right) =>
+    levelDistanceTo(left.levelSort, targetLevel) - levelDistanceTo(right.levelSort, targetLevel) ||
+    left.levelSort - right.levelSort ||
+    left.name.localeCompare(right.name);
+}
+
+function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>): string {
+  const base = `${entry.name} (${entry.level}${entry.traits === '' ? '' : `, ${entry.traits}`})`;
+  // fix-02 (decision 5): the " — <bookTitle>" suffix appears ONLY when the
+  // name occurs in more than one ready pack book — unique names stay bare.
+  if (!duplicatedNames.has(comparableName(entry.name))) return base;
+  return `${base} — ${entry.bookTitle}`;
+}
+
+/**
+ * Names that occur in more than one distinct ready pack book (fix-02 decision
+ * 5) — THE ONE cross-book duplicate reader, for BOTH pack prompt windows: the
+ * roster's creature listing (`buildPackRoster`) and the item pool
+ * (`encounterItems.buildItemPool`). Same-book duplicates resolve by the landed
+ * recency order and never get a suffix — the disambiguator is for cross-book
+ * ambiguity only.
+ *
+ * The entry shape is the argument rather than a named type: the two windows
+ * carry different printed columns and only the name and the owning book decide
+ * the answer, so the seam is structural over exactly those two fields.
+ */
+export function duplicatedAcrossBooks(
+  entries: readonly { name: string; bookId: Id }[],
+): Set<string> {
+  const booksPerName = new Map<string, Set<Id>>();
+  for (const entry of entries) {
+    const key = comparableName(entry.name);
+    const books = booksPerName.get(key) ?? new Set<Id>();
+    books.add(entry.bookId);
+    booksPerName.set(key, books);
+  }
+  return new Set(
+    [...booksPerName.entries()].filter(([, books]) => books.size > 1).map(([key]) => key),
+  );
+}
+
+/**
+ * Builds the prompt roster (§7). Without a `targetLevel` the window keeps the
+ * historical level/name-ascending order byte-identically. With one, the
+ * window orders by `|levelSort − target|` ascending — the creatures that
+ * could actually threaten the target-level party — with ties broken by
+ * `levelSort` ascending, then name (locale-compare): fully deterministic.
+ * The cap, the line format and the truncation count are unaffected; the
+ * name index is built over ALL entries by the caller, so creatures outside
+ * the visible window stay resolvable.
+ */
+export function buildPackRoster(entries: readonly PackRosterEntry[], targetLevel?: number): PackRoster {
+  const sorted = [...entries].sort(
+    targetLevel === undefined
+      ? (a, b) => a.levelSort - b.levelSort || a.name.localeCompare(b.name)
+      : libraryLevelOrder<PackRosterEntry>(targetLevel),
+  );
+  const duplicatedNames = duplicatedAcrossBooks(entries);
+  return {
+    // Ordering is unaffected by the suffix: lines render from the
+    // sorted order (fix-02 acceptance criteria).
+    lines: sorted.slice(0, ROSTER_LIMIT).map((entry) => rosterLine(entry, duplicatedNames)),
+    total: sorted.length,
+    truncated: Math.max(0, sorted.length - ROSTER_LIMIT),
+  };
+}
+
+export interface PackRosterDeps {
+  listBooks: () => Promise<Rulebook[]>;
+  listChunks: (bookIds: Id[]) => Promise<RuleChunk[]>;
+}
+
+const defaultDeps: PackRosterDeps = {
+  listBooks: () => listRulebooks(),
+  listChunks: (bookIds) => listChunksByBooks(bookIds),
+};
+
+/**
+ * Collects the roster for a campaign system over every ready pack book
+ * (§7: origin 'pack', matching system, status 'ready' — books arrive most
+ * recently updated first). Chunks without a validated stat block must not
+ * exist in pack books (the importer enforces it), so encountering one is a
+ * loud data error, not a skip. `targetLevel` orders the PROMPT WINDOW by
+ * level distance (§7 ratified amendment); undefined keeps the ascending
+ * order. The name index always covers every entry.
+ */
+export async function collectPackRoster(
+  system: GameSystem,
+  deps: PackRosterDeps = defaultDeps,
+  targetLevel?: number,
+): Promise<PackRoster & { entries: PackRosterEntry[]; chunkByName: Map<string, Id> }> {
+  const books = (await deps.listBooks()).filter(
+    (book) => book.system === system && book.origin === 'pack' && book.status === 'ready',
+  );
+  const titleById = new Map(books.map((book) => [book.id, book.title]));
+  const bookRank = new Map(books.map((book, index) => [book.id, index]));
+  const chunks = await deps.listChunks(books.map((book) => book.id));
+  const entries: PackRosterEntry[] = [];
+  for (const chunk of chunks) {
+    // Item chunks (12-BESTIARY-PACKS §13) live in pack books of the same
+    // system but are equipment, not creatures — they are the item pool's
+    // input, never the roster's. Rules-text chunks (docs/12 §15: journal
+    // pages, conditions, feats, actions and class features as `section`, and
+    // spells as `spell` since the spells arc) are retrieval context for the
+    // same reason. Only a chunk with no structured rules payload and no
+    // validated stat block is the data error below.
+    if (
+      chunk.chunkType === 'item' ||
+      chunk.chunkType === 'section' ||
+      chunk.chunkType === 'spell'
+    ) {
+      continue;
+    }
+    if (chunk.chunkType !== 'statblock' || chunk.statBlock === null) {
+      throw new Error(`pack chunk ${chunk.id} has no validated stat block — re-import the pack`);
+    }
+    const name = chunk.headingPath[0];
+    if (name === undefined || name.trim() === '') {
+      throw new Error(`pack chunk ${chunk.id} has no creature name in its heading`);
+    }
+    entries.push({
+      name,
+      level: chunk.statBlock.level,
+      traits: chunk.statBlock.extras.Traits ?? '',
+      chunkId: chunk.id,
+      levelSort: parseLevelSort(chunk.statBlock.level),
+      bookId: chunk.bookId,
+      bookTitle: titleById.get(chunk.bookId) ?? '',
+    });
+  }
+  return { entries, chunkByName: rosterNameIndex(entries, bookRank), ...buildPackRoster(entries, targetLevel) };
+}
+
+/** ROSTER_ATTEMPTS (fix-02 decision 4): one automatic retry, then loud. */
+export const ROSTER_ATTEMPTS = 2;
+
+/**
+ * fix-02 (decision 4): a failing roster build retries automatically —
+ * bounded, 2 attempts total — so a transient read failure does not kill an
+ * otherwise runnable encounter. A persistent failure throws a NAMED error
+ * identifying the roster and system, with the underlying cause (which names
+ * the offending book/chunk, e.g. "pack chunk <id> has no validated stat
+ * block — re-import the pack") attached. There is no silent inline-only
+ * fallback: the caller fails the run loudly.
+ */
+export async function collectPackRosterWithRetry(
+  system: GameSystem,
+  deps: PackRosterDeps = defaultDeps,
+  attempts: number = ROSTER_ATTEMPTS,
+  targetLevel?: number,
+): Promise<PackRoster & { entries: PackRosterEntry[]; chunkByName: Map<string, Id> }> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await collectPackRoster(system, deps, targetLevel);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  const cause = errorMessage(lastError);
+  throw new Error(
+    `Bestiary pack roster for system "${system}" failed after ${String(attempts)} attempts: ${cause}`,
+    { cause: lastError ?? undefined },
+  );
+}

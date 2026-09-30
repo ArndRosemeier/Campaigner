@@ -1,0 +1,235 @@
+import { fileURLToPath, URL } from 'node:url';
+
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import { configDefaults, defineConfig } from 'vitest/config';
+
+import { readServiceWorkerVersion } from './scripts/swVersion.ts';
+import { DEV_VERSION } from './scripts/version.ts';
+
+// DOM-free test files run in the node environment: a fresh jsdom window
+// costs ~0.75s of fixed worker time per file, and these files never touch
+// the DOM. vitest 4 removed environmentMatchGlobs; test.projects is the
+// supported split. nodeTestGlobs is shared by both projects (include for
+// node, exclude for jsdom), so a file runs exactly once in exactly one
+// project. The jsdom project keeps the catch-all include: anything not
+// listed here defaults to jsdom, and a file should be added here only
+// after verifying it passes under `--environment=node`.
+//
+// Verified jsdom stragglers (NOT listed, must stay jsdom): llm's
+// chainRunner, encounterCartographer, imageRun, moduleGen,
+// moduleGen-auto-spine, runEngine, runEngine-grounding and
+// runEngine-grounding-expansion drive assertions through @testing-library
+// waitFor, which needs a DOM container; domain/encounterMap and
+// lib/imageAspect + lib/imageIntake use canvas; lib/file-picker and
+// lib/globalErrors touch window; features/module-post-generation's
+// real-chain Dexie timing only settles under jsdom.
+const nodeTestGlobs = [
+  // llm (24 of 32 — see jsdom stragglers above)
+  'tests/llm/{adversarialPass,ideaBoard,ideaBoard-recording,campaignGrounding,canvasChat,creatorRoster,draftSchemas,encounter-items,encounter-roster,encounterRun,encounterVision,image-caps,image-timeout,imageGen-fallback,imagePromptDraft}.test.ts',
+  'tests/llm/{jsonReply,language,modelFallback,openrouter,openrouterErrors,openrouter-stream,persona-extras,retry-hardening,schemaTolerances,treasureGuidance}.test.ts',
+  // db (all 17 — m2kinds/battleSeed are .tsx but pure-Dexie, no rendering)
+  'tests/db/**/*.test.ts',
+  'tests/db/{m2kinds,battleSeed}.test.tsx',
+  // domain (13 of 14 — encounterMap draws on canvas)
+  'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,creatureName,encounterNeonDetector,encounter-location-kind,entityNormalization}.test.ts',
+  'tests/domain/{itemData,mobSpells,module,pc-artifact,settings-onboarding,spellHeightening,wikiGraph}.test.ts',
+  'tests/domain/recent-chat-models.test.ts',
+  // lib (8 of 13 — file-picker/globalErrors touch window, imageAspect/
+  // imageIntake use canvas, graphLayout renders)
+  'tests/lib/{equal,exportImport,mdToPdfmake,mob-spells-pdf,modulePdf,parallel,pdfExport,progress,stopEpoch,wikilinks}.test.ts',
+  // ingest (all 11, incl. packs/)
+  'tests/ingest/**/*.test.ts',
+  // search (both), bestiary roster (bestiary-roster.tsx renders)
+  'tests/search/**/*.test.ts',
+  'tests/bestiary/roster.test.ts',
+  // features pure helpers (module-post-generation needs jsdom, see above)
+  'tests/features/{dice-math,mention-view,persona-request,seed-from-module,spell-rows}.test.ts',
+  // root-level DOM-free files (walkthrough uses waitFor)
+  'tests/{backup,pwa-assets,search}.test.ts',
+  // architecture scans (source-level, no DOM)
+  'tests/architecture/**/*.test.ts',
+];
+
+/**
+ * The worker budget a test run uses when nothing says otherwise.
+ *
+ * TWO, not the dev box's six, and that is deliberate (owner-directed,
+ * `docs/17-DECISION-LEDGER.md` row 94): a resource bound that depends on every
+ * writer REMEMBERING an environment variable is not a bound. Real incident,
+ * twice — a writer ran the bare form, and the second time an interrupted turn
+ * left that unbounded run (7 workers, 8 processes) alive straight through a
+ * harness restart on a box shared with the owner's own desktop. With this
+ * default, `pnpm exec vitest run` cannot exceed two workers whatever anyone
+ * forgets; raising it is an explicit act by whoever owns the machine's load.
+ */
+export const DEFAULT_TEST_WORKERS = 2;
+
+/**
+ * The HARD per-worker V8 heap cap, in MiB — the memory half of the bound.
+ *
+ * Owner directive (verbatim): "please make sure that you restrict the mem use to
+ * not more than 4gb or so since you are not the only worker here." It bounds each
+ * worker's V8 heap; it cannot bound OFF-heap memory (pdfjs holds ArrayBuffers),
+ * which is why the gate also runs in CHUNKS under a watchdog (scripts/gate.sh,
+ * AGENTS §Host hygiene 7).
+ *
+ * VITEST 4 READS THIS ONLY AS A TOP-LEVEL `execArgv` (ledger row 229). The
+ * pre-4 `poolOptions.forks/threads.execArgv` spelling is not merely deprecated:
+ * nothing in vitest 4 reads it (the only mention is the `logger.deprecate` that
+ * greets the key), and `poolOptions` is absent from vitest's types — so `tsc -b`,
+ * which DOES typecheck this file (`tsconfig.node.json` includes it), cannot see
+ * the loss either. MEASURED on this box: the spelling below → 1584 MB
+ * `heap_size_limit`; the old one → 4144 MB, i.e. no cap at all.
+ */
+export const TEST_WORKER_HEAP_CAP_MB = 1536;
+
+/**
+ * The worker budget for a test run — the ONE bound that actually binds.
+ *
+ * `maxWorkers` must be set at the root AND in every project: vitest resolves a
+ * project's own value ahead of the root config, and `extends: true` copies the
+ * root value into each project, so a CLI `--maxWorkers=N` (which lands on the
+ * root) is silently ignored and both projects keep running the file-level
+ * value. MEASURED on this shared 8-core box: `pnpm exec vitest run
+ * --maxWorkers=2` runs 6 CPU-busy workers and 10 alive — i.e. the flag the
+ * agent rules used to prescribe was never a bound, and two writers meant up to
+ * twelve workers. The bound lives in the config (and, to raise it, in the
+ * environment):
+ *
+ *   CAMPAIGNER_TEST_WORKERS=4 pnpm exec vitest run
+ *
+ * A value that is present but not a positive integer is a loud error rather
+ * than a silent fallback (AGENTS rule 1).
+ */
+export function testMaxWorkers(): number {
+  const raw = process.env.CAMPAIGNER_TEST_WORKERS?.trim();
+  if (raw === undefined || raw === '') return DEFAULT_TEST_WORKERS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(
+      `CAMPAIGNER_TEST_WORKERS must be a positive integer (got "${raw}") — ` +
+        `unset it to use the default of ${String(DEFAULT_TEST_WORKERS)}.`,
+    );
+  }
+  return parsed;
+}
+
+// https://vite.dev/config/
+export default defineConfig(({ mode }) => {
+  // A TEST RUN MUST NOT BE AT THE MERCY OF AN AMBIENT NODE_ENV. Vitest sets
+  // NODE_ENV to 'test' only when it is UNSET, so a harness or container that
+  // exports NODE_ENV=production leaks straight in: React resolves its
+  // production build ("act(...) is not supported in production builds of
+  // React") and Vite transforms the jsdom project differently, so `node:`
+  // built-ins imported by a test fail as "No such built-in module: node:".
+  // MEASURED on this box 2026-09-18: under the ambient NODE_ENV=production the
+  // gate was RED across every chunk; `NODE_ENV=test vitest run` on the same
+  // file passed 10/10. Forcing it here covers EVERY entry point (the gate, a
+  // bare `pnpm exec vitest run`, and `pnpm test`) instead of one command, and
+  // `mode === 'test'` keeps `vite build`/`vite dev` on their real NODE_ENV.
+  if (mode === 'test') process.env.NODE_ENV = 'test';
+  const maxWorkers = testMaxWorkers();
+  // Spelled ONCE, referenced at the root and in every project: the number lives
+  // in TEST_WORKER_HEAP_CAP_MB, never as a literal at a call site.
+  const workerHeapArg = `--max-old-space-size=${String(TEST_WORKER_HEAP_CAP_MB)}`;
+  const fromEnv = process.env.CAMPAIGNER_BASE?.trim();
+  const base =
+    fromEnv && fromEnv.length > 0
+      ? fromEnv.endsWith('/')
+        ? fromEnv
+        : `${fromEnv}/`
+      : mode === 'domainfactory'
+        ? '/Campaigner/'
+        : '/';
+  // THE SERVICE WORKER'S CONTENT VERSION (docs/17 row 379). `sw.js` is a
+  // fixed-name asset and this host's CDN caches it for four hours while
+  // IGNORING a client `no-cache` (measured; the table lives in
+  // docs/08-TESTING.md §The service worker's URL is content-addressed), so a
+  // deployed worker change reaches a browser ONLY through a url whose NAME
+  // changes. The version is the hash of the worker's BYTES through the ONE
+  // seam `scripts/swVersion.ts` — never a timestamp or a build id, which
+  // would make every deploy a new worker url and force every client to
+  // re-fetch and re-install an unchanged worker. `tests/pwa-assets.test.ts`
+  // asserts the value injected here equals the hash of the real file.
+  const swVersion = readServiceWorkerVersion(fileURLToPath(new URL('.', import.meta.url)));
+
+  // THE APP VERSION (docs/17 row 404), injected exactly like the SW version.
+  // `scripts/publish.mjs` computes the NEXT version from `version.json` and
+  // passes it as CAMPAIGNER_VERSION to `vite build`; every other run (dev,
+  // test, an ad-hoc build) gets the non-release marker 'dev'.
+  const fromVersionEnv = process.env.CAMPAIGNER_VERSION?.trim();
+  const appVersion =
+    fromVersionEnv !== undefined && fromVersionEnv !== '' ? fromVersionEnv : DEV_VERSION;
+
+  return {
+    base,
+    // Injected into the bundle: `src/lib/serviceWorker.ts` reads it and
+    // composes the registration url. Stringified so the bundle carries a
+    // string literal, not an identifier.
+    define: {
+      __SW_VERSION__: JSON.stringify(swVersion),
+      __APP_VERSION__: JSON.stringify(appVersion),
+    },
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+      },
+    },
+    worker: {
+      format: 'es',
+    },
+    test: {
+      globals: true,
+      setupFiles: ['tests/setup.ts'],
+      css: false,
+      // jsdom + PDF/image suites are memory-heavy; unbounded workers caused
+      // event-loop starvation and false 5s timeouts on constrained CI/dev VMs.
+      // Historical measurement on this 8-core box, when the machine was
+      // exclusively ours: 6 workers (peak ~480-490MB RSS per worker, ~3GB tree)
+      // ran the full suite 84.8s -> 58.1s. The default is now 2 because the box
+      // is shared with the owner's desktop; raise it deliberately with
+      // CAMPAIGNER_TEST_WORKERS for a run that owns the machine (see
+      // testMaxWorkers above). The CLI flag does NOT work here, and this value
+      // is repeated in each project for that reason.
+      maxWorkers,
+      // HARD per-worker heap cap. Owner directive (verbatim): "please make sure
+      // that you restrict the mem use to not more than 4gb or so since you are
+      // not the only worker here." This bounds each worker's V8 heap; it cannot
+      // bound OFF-heap memory (pdfjs holds ArrayBuffers), which is why the gate
+      // also runs in CHUNKS under a watchdog (scripts/gate.sh, AGENTS §Host
+      // hygiene 7). Together: no single gate run is allowed to approach the
+      // box's capacity, and a run that does is killed rather than allowed to
+      // take dsh with it. VITEST 4 READS THIS ONLY AS A TOP-LEVEL `execArgv`
+      // (ledger row 229) — see TEST_WORKER_HEAP_CAP_MB — and it is repeated in
+      // each project for the same reason `maxWorkers` is: a project's own value
+      // is what binds.
+      execArgv: [workerHeapArg],
+      testTimeout: 20_000,
+      projects: [
+        {
+          extends: true,
+          test: {
+            name: 'node',
+            environment: 'node',
+            include: nodeTestGlobs,
+            maxWorkers,
+            execArgv: [workerHeapArg],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: 'jsdom',
+            environment: 'jsdom',
+            include: ['tests/**/*.test.{ts,tsx}'],
+            exclude: [...configDefaults.exclude, ...nodeTestGlobs],
+            maxWorkers,
+            execArgv: [workerHeapArg],
+          },
+        },
+      ],
+    },
+  };
+});

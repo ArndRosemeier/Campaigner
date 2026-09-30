@@ -1,0 +1,473 @@
+import { z } from 'zod';
+
+import {
+  spellAreaSchema,
+  spellDamageMapSchema,
+  spellTraditionSchema,
+  spellTraitsAreCantrip,
+  type SpellData,
+  type SpellHeighteningEntry,
+} from '@/domain/spellData';
+import { errorMessage } from '@/lib/errors';
+
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseJsonDocs,
+  publicationSourceLine,
+  titleCase,
+  AT_BRACE_LABEL_BLOCK_AND_TABLE,
+} from './text';
+import {
+  asPackFileParser,
+  sectionMissFailure,
+  type PackAdapter,
+  type PackEntryFailure,
+  type PackFileParse,
+  type PackSectionEntry,
+} from './types';
+
+/**
+ * `foundry-pf2e-rules` pack adapter (rules-text packs arc, docs/12 §15): the
+ * opt-in curated rules corpus from the Foundry VTT PF2e system content
+ * ([foundryvtt/pf2e](https://github.com/foundryvtt/pf2e) @ `v14-dev`) —
+ * `feats/` (6,284 documents in 7 category folders), `spells/` (1,994 in
+ * focus/impossible-spells/rituals/rank folders), `actions/` (574 in 20
+ * category folders) and `class-features/` (874, flat or per-class folders).
+ * Counts verified 2026-09-07 via a sparse clone of the pinned ref.
+ *
+ * All four packs share the entity shape (`type: 'feat' | 'spell' | 'action'`
+ * — class-feature documents are `type: 'feat'` with
+ * `system.category: 'classfeature'`), so ONE adapter parses all of them and
+ * the fetch source scopes its listing with `packDirs`. Documents come from
+ * NESTED folder layouts (e.g. `feats/skill/level-1/cat-fall.json`,
+ * `spells/spells/cantrip/acid-splash.json`): the FOLDER PATH maps into the
+ * heading path — the first folder labels the lane's category
+ * (`'Feats — Skill'`, `'Spells — Cantrip'`, `'Actions — Basic'`,
+ * `'Class Features — Magus'`), deeper folders keep their titled segments,
+ * and the document name is always the last element.
+ *
+ * Field mapping verified against live `v14-dev` documents (Cat Fall, Armor
+ * Proficiency, Acid Splash, Aid; fixture tests pin the consumed subset):
+ *
+ * - `system.description.value` HTML → stripped plain text (@-notation
+ *   resolves label-first).
+ * - `system.level.value` → the summary line's rank/level; `system.actionType`
+ *   renders Action/Reaction/Free Action (a `passive` feat renders no action
+ *   word); `system.traits.value` (+ spell `traditions`) → the trait line.
+ * - `system.prerequisites.value[].value` → the Prerequisites line.
+ * - Spell cast facts (`time`/`range`/`target`/`duration`) → the Cast line.
+ * - `system.publication` `{license, remaster, title}` → the trailing
+ *   `Source: …` line — per-entry licensing (ORC or OGL) is PRESERVED, not
+ *   dropped.
+ *
+ * Since the spells arc (docs/12 §15, row 181) a `spell` document ALSO emits
+ * its structured `spellData` (rank, cantrip, traditions, traits, cast facts,
+ * the source's own heightening plus the parsed heightening notes, and
+ * publication) on the SAME entry, and the runner persists a `chunkType:
+ * 'spell'` RuleChunk. The text above is byte-identical to the pre-arc bytes —
+ * it IS the `contentHash`, so changing it would invalidate stored citations.
+ */
+
+export const FOUNDRY_PF2E_RULES_ADAPTER_ID = 'foundry-pf2e-rules';
+
+export const FOUNDRY_PF2E_RULES_LICENSE =
+  'Pathfinder Second Edition rules text (feats, spells, actions, class ' +
+  'features) from the Foundry VTT PF2e system packs (Paizo Inc. via the ' +
+  'Foundry Gaming LLC partnership; per-entry licensing ORC or OGL, preserved ' +
+  'on each entry\'s Source line). User-imported for personal use under ' +
+  'Paizo\'s Community Use Policy — not for redistribution.';
+
+// --- Source schemas (consumed subset of the Foundry document; unknown keys
+// are ignored — the document is never re-serialized). ------------------------
+
+const pf2eRulesDocSchema = z.object({
+  name: z.string().min(1),
+  type: z.string(),
+  system: z.object({
+    description: z.object({ value: z.string().default('') }).default({ value: '' }),
+    traits: z
+      .object({
+        value: z.array(z.string()).default([]),
+        rarity: z.string().default('common'),
+        traditions: z.array(z.string()).default([]),
+      })
+      .default({ value: [], rarity: 'common', traditions: [] }),
+    level: z.object({ value: z.number() }).nullish(),
+    actionType: z.object({ value: z.string() }).nullish(),
+    category: z.string().nullish(),
+    time: z.object({ value: z.string() }).nullish(),
+    range: z.object({ value: z.string() }).nullish(),
+    target: z.object({ value: z.string() }).nullish(),
+    duration: z.object({ value: z.string() }).nullish(),
+    // The source's own damage/area, the numbers the heightening rule adds an
+    // interval delta to (ledger 183). Consumed verbatim; unknown keys inside
+    // each damage entry (`applyMod`, `kinds`) are dropped by the shared schema,
+    // which is the ONE damage-entry shape the payload and the heightening rule
+    // both read.
+    damage: spellDamageMapSchema.nullish(),
+    area: spellAreaSchema.nullish(),
+    // The source's own heightening structure — consumed VERBATIM (never
+    // normalized) by the spell payload; unknown keys inside it pass through
+    // whole, which is the point.
+    heightening: z.record(z.string(), z.unknown()).nullish(),
+    prerequisites: z
+      .object({ value: z.array(z.object({ value: z.string() })).default([]) })
+      .nullish(),
+    publication: z
+      .object({
+        title: z.string().default(''),
+        license: z.string().default(''),
+      })
+      .nullish(),
+  }),
+});
+
+type ParsedRulesDoc = z.infer<typeof pf2eRulesDocSchema>;
+
+/** Spell rank folders spell out `rank-N`; cantrips are their own folder. */
+function folderLabel(slug: string): string {
+  const rank = /^rank-(\d+)$/.exec(slug);
+  if (rank !== null) return `Rank ${rank[1] ?? ''}`.trim();
+  return titleCase(slug);
+}
+
+/** Lane labels by pack folder (and by document type for loose manual files). */
+const LANE_LABELS: Readonly<Record<string, string>> = {
+  feats: 'Feats',
+  spells: 'Spells',
+  actions: 'Actions',
+  'class-features': 'Class Features',
+};
+
+/** The document subset the heading derivation consumes. */
+export interface HeadingDocLike {
+  type: string;
+  system: { category?: string | null | undefined };
+}
+
+/**
+ * The category segments of one document's heading path — the fetch-relative
+ * file name's folders map into them and the runner appends the document name
+ * as the last element. The lane comes from the pack folder in the file name,
+ * with the document type/category as the fallback for loose manual imports;
+ * the first category folder rides the lane label (`'Feats — Skill'`), deeper
+ * folders become their own titled segments (`'Cantrip'`, `'Rank 1'`,
+ * `'Level 1'`). The pack folder itself never repeats as a category
+ * (`spells/spells/cantrip/…` → `'Spells — Cantrip'`).
+ */
+export function headingCategoriesFor(doc: HeadingDocLike, fileName: string): string[] {
+  const segments = fileName.split('/');
+  const packDir = segments.length >= 2 ? (segments[0] ?? '') : '';
+  const isClassFeature = doc.type === 'feat' && doc.system.category === 'classfeature';
+  const lane: string =
+    LANE_LABELS[packDir] ??
+    (isClassFeature
+      ? (LANE_LABELS['class-features'] ?? 'Rules')
+      : (LANE_LABELS[`${doc.type}s`] ?? 'Rules'));
+  // Category folders sit between the pack folder and the document; a folder
+  // repeating the pack name (`spells/spells/…`) carries no information.
+  const folderSegments = segments
+    .slice(1, -1)
+    .filter((segment) => segment !== '' && segment !== packDir);
+  const categories: string[] = [];
+  for (const [index, segment] of folderSegments.entries()) {
+    const label = folderLabel(segment);
+    categories.push(index === 0 ? `${lane} — ${label}` : label);
+  }
+  if (categories.length === 0) {
+    // Flat pack (class-features) or a loose manual import: the lane alone,
+    // suffixed by the document's own category when it adds information.
+    const category = doc.system.category ?? '';
+    if (category !== '' && category !== 'classfeature') {
+      categories.push(`${lane} — ${titleCase(category)}`);
+    } else {
+      categories.push(lane);
+    }
+  }
+  return categories;
+}
+
+const ACTION_TYPE_LABELS: Readonly<Record<string, string>> = {
+  action: 'Action',
+  reaction: 'Reaction',
+  free: 'Free Action',
+};
+
+// --- Mapping ---------------------------------------------------------------
+
+function summaryLine(doc: ParsedRulesDoc): string | null {
+  const parts: string[] = [];
+  if (doc.type === 'spell') {
+    const cantrip = spellTraitsAreCantrip(doc.system.traits.value);
+    const rank = doc.system.level?.value;
+    parts.push(rank === undefined ? (cantrip ? 'Cantrip' : 'Spell') : `${cantrip ? 'Cantrip' : 'Spell'} ${String(rank)}`);
+  } else if (doc.type === 'feat') {
+    const level = doc.system.level?.value;
+    parts.push(level === undefined ? 'Feat' : `Feat ${String(level)}`);
+  } else if (doc.type === 'action') {
+    const actionType = doc.system.actionType?.value ?? 'action';
+    parts.push(ACTION_TYPE_LABELS[actionType] ?? titleCase(actionType));
+  }
+  const traits = doc.system.traits.value;
+  if (traits.length > 0) parts.push(`(${traits.join(', ')})`);
+  if (doc.system.traits.rarity !== 'common') parts.push(doc.system.traits.rarity);
+  if (doc.type === 'spell' && doc.system.traits.traditions.length > 0) {
+    parts.push(doc.system.traits.traditions.join(', '));
+  }
+  return parts.length === 0 ? null : parts.join(' ');
+}
+
+function castLine(doc: ParsedRulesDoc): string | null {
+  if (doc.type !== 'spell') return null;
+  const parts = [
+    doc.system.time?.value.trim() ?? '',
+    doc.system.range?.value.trim() ?? '',
+    doc.system.target?.value.trim() ?? '',
+    doc.system.duration?.value.trim() ?? '',
+  ]
+    .filter((part) => part !== '')
+    .map((part, index) => (index === 0 ? `Cast ${part}` : part));
+  return parts.length === 0 ? null : parts.join(' · ');
+}
+
+/**
+ * A PF2e `Heightened` heading as the corpus writes it, in THREE shapes:
+ * `Heightened (Nth)` (an exact rank), `Heightened (+N)` (an interval) and a
+ * bare `Heightened` with neither (the summon-spell family, which delegates the
+ * scaling to a trait). Case-insensitive and whitespace-tolerant; ordinals are
+ * `st|nd|rd|th`. A description that CARRIES this heading shape but matches none
+ * of these is captured unparsed, never dropped.
+ */
+const HEIGHTENING_HEADING =
+  /<strong>\s*Heightened\s*(?:\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\))?\s*<\/strong>/gi;
+
+/**
+ * The heightening SECTION's own MARKUP SHAPE — ALSO the MISS PROBE of docs/17
+ * row 294: this is the loose test for "this document HAS a heightening
+ * section", while `HEIGHTENING_HEADING` above is the VALUE pattern that reads
+ * it. A document that carries this shape while the VALUE pattern reads NO
+ * heading is a MISS: the notes still ride `unparsed` (row 221) AND the import
+ * report is told, so a document whose heading differs from the pattern in hand
+ * is no longer indistinguishable from one with no heightening at all.
+ *
+ * THE SHAPE IS A HEADING, AND THAT IS THE ROW-370 CORRECTION. This probe used
+ * to be the bare word (`/heightened/i`), which is not a markup shape at all: it
+ * matched a MENTION in running prose, so a spell that merely names the
+ * mechanism while having no heightening section of its own was reported as a
+ * miss and the sentence it was mentioned in was stored as `heighteningUnparsed`
+ * — a fabricated heightening line. MEASURED against ALL 1,994 `v14-dev`
+ * documents under `packs/pf2e/spells` (fetched byte-for-byte, docs/17 row 370):
+ * 1,134 carry a readable heading and exactly EIGHT carry the word only in
+ * prose — `focus/fey-glamour` ("…as if heightened to a rank 1 rank lower than
+ * <em>fey glamour</em>…"), `focus/magic-warrior-transformation`,
+ * `focus/mantis-form`, `focus/mystic-beacon`, `focus/weapon-trance`,
+ * `rank-4/reflected-beauty`, `rank-8/mimic-spell`, `rank-9/metamorphosis` —
+ * and not one of them has a `Heightened` heading or a `system.heightening`
+ * object. Those eight were the owner's "8 spells" on a first import.
+ *
+ * Anchoring detection to heading markup is the technique docs/18 §5(2) already
+ * ratified for the sibling family ("The dnd5e probe is block-anchored to shrink
+ * this as far as a pattern can"), and it is still DELIBERATELY LOOSER than the
+ * VALUE pattern: any emphasis or heading element may carry the heading
+ * (`<b>`/`<em>`/`<i>`/`<h1>`–`<h6>` as well as the corpus's `<strong>`), any
+ * attributes and any case, and the parenthetical may be anything at all — so a
+ * variant upstream spelling is still DETECTED and named rather than read. It is
+ * NOT an HTML stripper (the ingest layer has exactly one of those, in
+ * `./text`, and its source scan holds this file to that): nothing is removed or
+ * rewritten.
+ */
+const HEIGHTENING_HEADING_PROBE = /<(?:strong|b|em|i|h[1-6])\b[^>]*>\s*Heightened\b/i;
+
+/**
+ * Parse a spell's heightening notes out of the RAW description HTML, BEFORE it
+ * is stripped (the tags are the only place the rank/interval lives). Notes are
+ * returned in document order; each note's `text` is the prose between its
+ * heading and the next one, stripped by the lane's ONE HTML→text seam. A
+ * heading that names no rank and no interval is a `note` — the source's own
+ * prose, from which NOTHING is computed (docs/17 row 221). A document that
+ * carries a heightening HEADING (see `HEIGHTENING_HEADING_PROBE`) which the
+ * VALUE pattern reads as NO shape yields no entries and its offending line(s)
+ * in `unparsed`, each stripped by that SAME seam so a GM reads prose and never
+ * markup or `@UUID[…]` notation — loud data, not a failure and not a silent
+ * drop. A document whose description only MENTIONS heightening in running prose
+ * has no section at all: that is an ABSENCE, so it yields no entries, NO
+ * `unparsed` line (the mention is not a heightening line) and no miss
+ * (docs/17 row 370).
+ */
+function parseHeighteningEntries(html: string): {
+  entries: SpellHeighteningEntry[];
+  unparsed: string[];
+} {
+  const matches = [...html.matchAll(HEIGHTENING_HEADING)];
+  const entries: SpellHeighteningEntry[] = [];
+  for (const [index, match] of matches.entries()) {
+    const start = match.index + match[0].length;
+    const end = matches[index + 1]?.index ?? html.length;
+    const text = htmlToText(html.slice(start, end), AT_BRACE_LABEL_BLOCK_AND_TABLE).trim();
+    const rank = match[1];
+    const increment = match[2];
+    if (rank !== undefined) {
+      entries.push({ kind: 'fixed', rank: Number(rank), text });
+    } else if (increment !== undefined) {
+      entries.push({ kind: 'increment', increment: Number(increment), text });
+    } else {
+      // A bare `<strong>Heightened</strong>`: no rank, no interval, nothing to
+      // compute — the note is printed as the source's own prose.
+      entries.push({ kind: 'note', text });
+    }
+  }
+  if (entries.length === 0 && HEIGHTENING_HEADING_PROBE.test(html)) {
+    return {
+      entries,
+      unparsed: html
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && HEIGHTENING_HEADING_PROBE.test(line))
+        // The heading shape is found on the RAW line (no raw heading is ever
+        // dropped) and the STORED line is the seam's plain prose, so a GM
+        // reads the source's words and never its markup (docs/17 row 221).
+        .map((line) => htmlToText(line, AT_BRACE_LABEL_BLOCK_AND_TABLE).trim())
+        .filter((line) => line !== ''),
+    };
+  }
+  return { entries, unparsed: [] };
+}
+
+/**
+ * The structured half of a spell document (docs/12 §15, the spells arc). A
+ * cantrip is rank 0 — MEASURED against `v14-dev` (2026-09-16): the corpus
+ * stores cantrips at `system.level.value: 1` (the legacy Acid Splash fixture
+ * AND the remastered Ignition), so the `cantrip` trait is the only reliable
+ * signal and normalizing it gives a list ONE order where cantrips lead. An
+ * unknown tradition or a spell with neither signal is a loud per-entry
+ * failure, never a silent zero. Heightening is captured as data here (the
+ * source's own `system.heightening` verbatim, plus the parsed notes) so a
+ * later arc can render a spell at the rank a mob casts it without a second
+ * pass over these packs.
+ */
+function spellDataFor(
+  doc: ParsedRulesDoc,
+  fileName: string,
+  failures: PackEntryFailure[],
+): SpellData | null {
+  if (doc.type !== 'spell') return null;
+  const cantrip = spellTraitsAreCantrip(doc.system.traits.value);
+  const rank = cantrip ? 0 : doc.system.level?.value;
+  if (rank === undefined) {
+    throw new Error(`spell "${doc.name}" has neither a cantrip trait nor system.level.value`);
+  }
+  const heightening = parseHeighteningEntries(doc.system.description.value);
+  // ABSENCE vs MISS (docs/17 row 294): a spell with no heightening at all is
+  // normal and SILENT; a description that carries the heightening HEADING shape
+  // while the VALUE pattern reads no heading is a MISS named on the import
+  // report (docs/17 row 370 anchored the probe to that markup shape, so a
+  // running-prose mention is an ABSENCE and not a miss). The notes row 221
+  // stores stay exactly as they are — this ADDS the report surface.
+  const miss = sectionMissFailure(
+    doc.system.description.value,
+    HEIGHTENING_HEADING_PROBE,
+    heightening.entries.length > 0,
+    { file: fileName, name: doc.name, section: 'Heightened', entry: 'spell' },
+  );
+  const payload: SpellData = {
+    system: 'pathfinder2e',
+    rank,
+    cantrip,
+    traditions: spellTraditionSchema.array().parse(doc.system.traits.traditions),
+    // The PF2e lane's own list axis (docs/17 row 194): the traditions above.
+    filterAxis: 'tradition',
+    school: '',
+    properties: [],
+    traits: doc.system.traits.value,
+    rarity: doc.system.traits.rarity,
+    cast: {
+      time: doc.system.time?.value.trim() ?? '',
+      range: doc.system.range?.value.trim() ?? '',
+      target: doc.system.target?.value.trim() ?? '',
+      duration: doc.system.duration?.value.trim() ?? '',
+    },
+    damage: doc.system.damage ?? {},
+    area: doc.system.area ?? null,
+    heightening: doc.system.heightening ?? null,
+    heighteningEntries: heightening.entries,
+    heighteningUnparsed: heightening.unparsed,
+    publication: doc.system.publication ?? null,
+  };
+  // Pushed after the payload is built, so a document that fails on another
+  // boundary (an unknown tradition, an unreadable rank) never also reports a
+  // miss, and a miss never removes the entry.
+  if (miss !== null) failures.push(miss);
+  return payload;
+}
+
+function mapRulesDoc(
+  doc: ParsedRulesDoc,
+  fileName: string,
+  failures: PackEntryFailure[],
+): PackSectionEntry {
+  const lines: string[] = [];
+  const summary = summaryLine(doc);
+  if (summary !== null) lines.push(summary);
+  const cast = castLine(doc);
+  if (cast !== null) lines.push(cast);
+  const prerequisites = (doc.system.prerequisites?.value ?? [])
+    .map((prerequisite) => prerequisite.value.trim())
+    .filter((prerequisite) => prerequisite !== '');
+  if (prerequisites.length > 0) lines.push(`Prerequisites: ${prerequisites.join('; ')}`);
+  const description = htmlToText(doc.system.description.value, AT_BRACE_LABEL_BLOCK_AND_TABLE);
+  if (description !== '') lines.push(description);
+  const source = publicationSourceLine(doc.system.publication);
+  if (source !== null) lines.push(source);
+  // The structured half rides the SAME entry; non-spells omit the key so the
+  // runner persists the chunk they always got (text byte-identical).
+  const spell = spellDataFor(doc, fileName, failures);
+  return {
+    categories: headingCategoriesFor(doc, fileName),
+    name: doc.name,
+    text: [doc.name, ...lines].join('\n'),
+    ...(spell === null ? {} : { spell }),
+  };
+}
+
+// --- Adapter ---------------------------------------------------------------
+
+const ACCEPTED_TYPES: ReadonlySet<string> = new Set(['feat', 'spell', 'action']);
+
+/** Synchronous parse body — wrapped into the promise contract by `asPackFileParser`. */
+function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
+  const text = new TextDecoder('utf-8').decode(bytes);
+  const docs = parseJsonDocs(text, fileName);
+  const sections: PackSectionEntry[] = [];
+  const failures: PackFileParse['failures'] = [];
+  let skipped = 0;
+  for (const [index, doc] of docs.entries()) {
+    if (!isDocumentRecord(doc) || typeof doc.type !== 'string' || !ACCEPTED_TYPES.has(doc.type)) {
+      skipped += 1;
+      continue;
+    }
+    const name = typeof doc.name === 'string' ? doc.name : '';
+    try {
+      sections.push(mapRulesDoc(pf2eRulesDocSchema.parse(doc), fileName, failures));
+    } catch (error) {
+      failures.push({
+        file: fileName,
+        name,
+        message: `document ${String(index)}: ${errorMessage(error)}`,
+      });
+    }
+  }
+  return { entries: [], sections, skipped, failures };
+}
+
+const parseFile = asPackFileParser(parseFileSync);
+
+export const foundryPf2eRulesAdapter: PackAdapter = {
+  id: FOUNDRY_PF2E_RULES_ADAPTER_ID,
+  label: 'PF2e Rules Text — feats 6,284 · spells 1,994 · actions 574 · class features 874 (Foundry VTT PF2e system packs)',
+  system: 'pathfinder2e',
+  license: FOUNDRY_PF2E_RULES_LICENSE,
+  extensions: ['.json', '.db'],
+  entryNoun: 'rule',
+  parseFile,
+};

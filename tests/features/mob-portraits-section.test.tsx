@@ -1,0 +1,608 @@
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { AnyArtifact } from '@/domain';
+import type { MobPortraitBatchPlan } from '@/features/campaign/mob-portrait-queue';
+import { MobPortraitsSection } from '@/features/campaign/components/mob-portraits-section';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
+import { flushAsyncUpdates } from '../helpers/flush';
+
+/**
+ * Mob portraits section (docs/11 D5 amendment): rulebook-cited kinds keep
+ * the "Generate mob portraits" batch, while uncited entries (inline/none)
+ * get a per-entry and batch-all "Create creature + portrait" action — no
+ * more dead-end disabled button when zero rulebook entries exist.
+ *
+ * The batch confirm (owner report: "2 mobs already have an image and I just
+ * want to fill a hole" — Monster Core art from the shared canonical slot):
+ * the press counts READ-ONLY first and then
+ * - fills immediately when nothing is imaged yet (pure gaps, unchanged),
+ * - offers BOTH ways when some kinds are imaged and some are not — "Fill the
+ *   missing N" (primary, additive, existing art kept) and "Replace all M"
+ *   (secondary, today's delete-after-replace regen) — with the shared
+ *   Monster Core consequence stated BEFORE the choice,
+ * - offers only replace-all (with the reason) when nothing is missing.
+ * The per-entry invented action keeps its own confirm, unchanged.
+ */
+
+vi.mock('@/features/campaign/mob-portrait-queue', () => ({
+  enqueueEncounterPortraitFill: vi.fn(),
+  enqueueMobPortraits: vi.fn(),
+  enqueueInventedCreaturePortraits: vi.fn(),
+  planMobPortraitBatch: vi.fn(),
+  regenerateEncounterPortraits: vi.fn(),
+  regenerateInventedCreaturePortraits: vi.fn(),
+}));
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
+
+const {
+  enqueueEncounterPortraitFill,
+  enqueueMobPortraits,
+  enqueueInventedCreaturePortraits,
+  planMobPortraitBatch,
+  regenerateEncounterPortraits,
+  regenerateInventedCreaturePortraits,
+} = await import('@/features/campaign/mob-portrait-queue');
+const enqueueFillMock = vi.mocked(enqueueEncounterPortraitFill);
+const enqueueMobPortraitsMock = vi.mocked(enqueueMobPortraits);
+const enqueueInventedMock = vi.mocked(enqueueInventedCreaturePortraits);
+const planMock = vi.mocked(planMobPortraitBatch);
+// MIGRATED (docs/17 row 422): Replace all runs BOTH lanes through the ONE
+// encounter-level seam (`regenerateEncounterPortraits`), so the pins observe that
+// seam; the per-entry invented action still calls its own lane directly.
+const regenerateEncounterMock = vi.mocked(regenerateEncounterPortraits);
+const regenerateInventedMock = vi.mocked(regenerateInventedCreaturePortraits);
+const { toastSuccess, toastInfo } = await import('@/lib/toast');
+const toastSuccessMock = vi.mocked(toastSuccess);
+const toastInfoMock = vi.mocked(toastInfo);
+
+type Encounter = AnyArtifact & { kind: 'encounter' };
+
+function enc(
+  monsters: { name: string; source: Record<string, unknown>; notes?: string }[],
+): Encounter {
+  return {
+    id: 'encounter-1',
+    campaignId: 'campaign-1',
+    moduleId: null,
+    kind: 'encounter',
+    name: 'Ooze warren',
+    data: {
+      monsters: monsters.map((monster) => ({
+        name: monster.name,
+        count: 1,
+        notes: monster.notes ?? '',
+        treasure: '',
+        source: monster.source,
+      })),
+    },
+  } as unknown as Encounter;
+}
+
+/** A read-only count with nothing to report — the shape every test starts
+ * from and then overrides per state. */
+function plan(overrides: Partial<MobPortraitBatchPlan> = {}): MobPortraitBatchPlan {
+  return {
+    missing: [],
+    imaged: [],
+    sharedRows: 0,
+    sharedPortraitNames: [],
+    unreadableCitations: [],
+    ...overrides,
+  };
+}
+
+const INLINE = { type: 'inline', statBlock: null };
+const NONE = { type: 'none' };
+const RULEBOOK = { type: 'none' };
+
+beforeEach(() => {
+  enqueueFillMock.mockReset();
+  enqueueMobPortraitsMock.mockReset();
+  enqueueInventedMock.mockReset();
+  planMock.mockReset();
+  regenerateEncounterMock.mockReset();
+  regenerateInventedMock.mockReset();
+  toastSuccessMock.mockReset();
+  toastInfoMock.mockReset();
+  planMock.mockResolvedValue(plan());
+  enqueueFillMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
+  enqueueMobPortraitsMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
+  enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
+  regenerateEncounterMock.mockResolvedValue({ regenerated: 0, filled: 0, republishedCanonical: [] });
+  regenerateInventedMock.mockResolvedValue({ regenerated: 0, filled: 0 });
+});
+
+describe('MobPortraitsSection invented-creature actions', () => {
+  it('lists uncited entries with per-entry create buttons and an enabled create batch when zero rulebook entries exist', async () => {
+    const artifact = enc([
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Whisper Wisp', source: NONE },
+    ]);
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    // REWRITTEN (ledger row 106): the copy used to promise that each uncited
+    // entry "gets a creature artifact first, then its own portrait" — nothing
+    // is created for it now (docs/11 D1/D5), so the promise would be a lie. The
+    // surface still names the action and the count it will act on (row 90); it
+    // now names the GROUNDING instead, because a roster note is the only
+    // description an invented creature has.
+    expect(
+      screen.getByText(/the invented entries below are illustrated from their own roster notes/i),
+    ).toBeDefined();
+    const batch = screen.getByTestId('generate-mob-portraits');
+    expect(batch.textContent).toMatch(/Create portraits \(2\)/);
+    expect(batch.hasAttribute('disabled')).toBe(false);
+
+    const list = screen.getByTestId('mob-portraits-uncited');
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toMatch(/Gloom Ooze/);
+    expect(rows[0]?.textContent).toMatch(/with stat block/);
+    expect(rows[1]?.textContent).toMatch(/name only/);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('create-creature-portrait-1'));
+    await waitFor(() => {
+      expect(enqueueInventedMock).toHaveBeenCalledTimes(1);
+    });
+    expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1', [1]);
+    expect(enqueueFillMock).not.toHaveBeenCalled();
+    // The per-entry action never consults the batch count.
+    expect(planMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('batch-all with both kinds routes through the ONE fill seam (both lanes inside it)', async () => {
+    const artifact = enc([
+      { name: 'Goblin Boss', source: RULEBOOK },
+      { name: 'Gloom Ooze', source: INLINE },
+    ]);
+    // Pure gaps: nothing imaged yet — the press fills immediately, as before.
+    planMock.mockResolvedValue(plan({ missing: ['Goblin Boss', 'Gloom Ooze'] }));
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    // The label names the ONE thing the press does — create portraits for the
+    // roster participants it counts (row 90). Under the ratified model it
+    // creates no creature artifacts, so it must not promise any (ledger 106).
+    expect(screen.getByTestId('generate-mob-portraits').textContent).toMatch(
+      /Create portraits \(2\)/,
+    );
+    expect(screen.getByTestId('mob-portraits-uncited')).toBeDefined();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await waitFor(() => {
+      // ONE seam runs both lanes (docs/17 row 196): the surface composes the
+      // counts from its result, so it can never call one lane and drop the
+      // other (row 90's shape-gating defect).
+      expect(enqueueFillMock).toHaveBeenCalledTimes(1);
+    });
+    expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
+    expect(enqueueInventedMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('empty roster disables the batch with a no-creatures message (never the old dead-end)', () => {
+    render(<MobPortraitsSection artifact={enc([])} campaignId="campaign-1" />);
+    expect(screen.getByText(/No creatures to illustrate/i)).toBeDefined();
+    expect(screen.queryByText(/bestiary-cited roster entries/)).toBeNull();
+    expect(screen.getByTestId('generate-mob-portraits').hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByTestId('mob-portraits-uncited')).toBeNull();
+  });
+
+  it('renders nothing for library (campaign-less) encounters', () => {
+    const artifact = {
+      ...enc([{ name: 'Gloom Ooze', source: INLINE }]),
+      campaignId: null,
+      moduleId: null,
+    } as unknown as Encounter;
+    const { container } = render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+    expect(container.innerHTML).toBe('');
+  });
+});
+
+describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
+  it('MIXED: offers Fill with the real missing count and enqueues ONLY the missing kinds, replacing nothing', async () => {
+    const artifact = enc([
+      { name: 'Goblin Boss', source: RULEBOOK },
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Ogre', source: RULEBOOK },
+    ]);
+    // 2 kinds already show a portrait (Monster Core art from the shared
+    // canonical slot), Ogre has none — the owner's report verbatim.
+    planMock.mockResolvedValue(plan({ missing: ['Ogre'], imaged: ['Goblin Boss', 'Gloom Ooze'] }));
+    enqueueFillMock.mockResolvedValue({
+      enqueued: 1,
+      alreadyImaged: ['Goblin Boss', 'Gloom Ooze'],
+    });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    const dialog = await screen.findByTestId('mob-portraits-choice-dialog');
+    // The counts are the plan's, the choice names both paths, and nothing
+    // was queued by looking.
+    expect(dialog.textContent).toMatch(/Fill 1 missing portrait or replace 2\?/);
+    const copy = screen.getByTestId('mob-portraits-choice-copy').textContent;
+    expect(copy).toMatch(/2 of 3 creature kinds already have a portrait/);
+    expect(copy).toMatch(/"Goblin Boss", "Gloom Ooze"/);
+    expect(copy).toMatch(/1 has none \("Ogre"\)/);
+    expect(copy).toMatch(/Filling adds only the missing portrait and keeps the 2 that exist/);
+    expect(copy).toMatch(/Replacing regenerates all 2 existing portraits and still fills the missing one/);
+    expect(enqueueFillMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
+
+    const fill = screen.getByTestId('mob-portraits-choice-fill');
+    expect(fill.textContent).toMatch(/Fill the missing 1/);
+    await user.click(fill);
+    await waitFor(() => {
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    // The imaged kinds are untouched: no regen path ran at all.
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
+    expect(regenerateInventedMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        'Filling 1 missing portrait — keeping the 2 that exist',
+      );
+    });
+    await flushAsyncUpdates();
+  });
+
+  it('MIXED: Replace all still regenerates every portrait (existing behavior preserved)', async () => {
+    const artifact = enc([
+      { name: 'Goblin Boss', source: RULEBOOK },
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Ogre', source: RULEBOOK },
+    ]);
+    planMock.mockResolvedValue(plan({ missing: ['Ogre'], imaged: ['Goblin Boss', 'Gloom Ooze'] }));
+    regenerateEncounterMock.mockResolvedValue({ regenerated: 3, filled: 0, republishedCanonical: [] });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    expect(screen.getByTestId('mob-portraits-choice-replace').textContent).toMatch(/Replace all 2/);
+
+    await user.click(screen.getByTestId('mob-portraits-choice-replace'));
+    await waitFor(() => {
+      expect(regenerateEncounterMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        expect.stringMatching(/Regenerating 3 portraits/),
+      );
+    });
+    await flushAsyncUpdates();
+  });
+
+  it('MIXED: Cancel queues nothing and says so honestly (the holes are still holes)', async () => {
+    const artifact = enc([
+      { name: 'Goblin Boss', source: RULEBOOK },
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Ogre', source: RULEBOOK },
+    ]);
+    planMock.mockResolvedValue(plan({ missing: ['Ogre'], imaged: ['Goblin Boss', 'Gloom Ooze'] }));
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    await user.click(screen.getByTestId('mob-portraits-choice-cancel'));
+
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledWith('Nothing queued — 1 creature kind still has no portrait');
+    });
+    // Never the all-generated toast in a state that still has a hole.
+    expect(toastSuccessMock).not.toHaveBeenCalledWith('All mob portraits are already generated');
+    expect(enqueueFillMock).not.toHaveBeenCalled();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('NOTHING MISSING: offers replace-all only, with the reason, and still works; Cancel keeps the old toast', async () => {
+    const artifact = enc([{ name: 'Goblin Boss', source: RULEBOOK }]);
+    planMock.mockResolvedValue(plan({ imaged: ['Goblin Boss'] }));
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    const dialog = await screen.findByTestId('mob-portraits-choice-dialog');
+    expect(dialog.textContent).toMatch(/Replace all 1 portrait\?/);
+    const copy = screen.getByTestId('mob-portraits-choice-copy').textContent;
+    expect(copy).toMatch(/All 1 creature kinds already have a portrait: "Goblin Boss"/);
+    expect(copy).toMatch(/Nothing is missing, so there is nothing to fill/);
+    // No dead or silently meaningless additive control.
+    expect(screen.queryByTestId('mob-portraits-choice-fill')).toBeNull();
+
+    await user.click(screen.getByTestId('mob-portraits-choice-cancel'));
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('All mob portraits are already generated');
+    });
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
+
+    // And the replace action itself works.
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    regenerateEncounterMock.mockResolvedValue({ regenerated: 1, filled: 0, republishedCanonical: [] });
+    await user.click(screen.getByTestId('mob-portraits-choice-replace'));
+    await waitFor(() => {
+      expect(regenerateEncounterMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        expect.stringMatching(/Regenerating 1 portrait/),
+      );
+    });
+    await flushAsyncUpdates();
+  });
+
+  it('states the shared Monster Core consequence of replacing BEFORE the choice, not in a toast', async () => {
+    const artifact = enc([
+      { name: 'Goblin', source: RULEBOOK },
+      { name: 'Troll', source: RULEBOOK },
+    ]);
+    planMock.mockResolvedValue(
+      plan({
+        missing: ['Troll'],
+        imaged: ['Goblin'],
+        sharedRows: 1,
+        sharedPortraitNames: ['Goblin'],
+      }),
+    );
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    const copy = screen.getByTestId('mob-portraits-choice-copy').textContent;
+    // The consequence, stated before the choice: the copy names the SHARED
+    // bestiary slot rather than a "Monster Core" install — republishing changes
+    // the portrait every future campaign clones.
+    expect(copy).toMatch(/Bestiary creature portraits are shared: republishing/);
+    expect(copy).toMatch(/existing covers elsewhere keep theirs/);
+    expect(copy).toMatch(/republishing "Goblin" changes the shared portrait every future campaign clones/);
+    expect(copy).toMatch(/existing covers elsewhere keep theirs/);
+    // The counts carry the same-kind share instead of hiding it.
+    expect(copy).toMatch(/1 roster row shares a creature kind with another row/);
+        expect(toastSuccessMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('states the shared cost of replacing an imaged bestiary portrait, and never claims a portrait the board does not show', async () => {
+    const artifact = enc([{ name: 'Ogre', source: RULEBOOK }]);
+    // REWRITTEN (ledger row 106): this test used to build the "art on the row
+    // that is not set as its cover" state and pin the copy that explained it.
+    // With ONE portrait seam the presentation row IS the portrait (docs/18 §4),
+    // so that state cannot exist and its copy is gone rather than reworded.
+    // What survives is the consequence the owner must see before choosing:
+    // replacing a canonical bestiary portrait reaches every future campaign,
+    // while this campaign's own portraits stay its own.
+    planMock.mockResolvedValue(
+      plan({ imaged: ['Ogre'], sharedPortraitNames: ['Ogre'] }),
+    );
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    const copy = screen.getByTestId('mob-portraits-choice-copy').textContent;
+    expect(copy).toMatch(/Bestiary creature portraits are shared: republishing "Ogre"/);
+    expect(copy).toMatch(/this campaign's own presentation portraits are its own/);
+    // Nothing missing: the additive action stays absent (there is no hole the
+    // batch fills), only replace-all is offered.
+    expect(screen.queryByTestId('mob-portraits-choice-fill')).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('names an unreadable citation instead of hiding the consequence', async () => {
+    const artifact = enc([{ name: 'Ogre', source: RULEBOOK }]);
+    planMock.mockResolvedValue(plan({ imaged: ['Ogre'], unreadableCitations: ['Ogre'] }));
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await screen.findByTestId('mob-portraits-choice-dialog');
+    const copy = screen.getByTestId('mob-portraits-choice-copy').textContent;
+    expect(copy).toMatch(/The bestiary citation for "Ogre" can no longer be read/);
+    expect(copy).toMatch(/fails loudly and keeps its cover/);
+    await flushAsyncUpdates();
+  });
+
+  it('pure gaps fill immediately with no dialog, and report what happened', async () => {
+    const artifact = enc([{ name: 'Ogre', source: RULEBOOK }]);
+    planMock.mockResolvedValue(plan({ missing: ['Ogre'] }));
+    enqueueFillMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await waitFor(() => {
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('mob-portraits-choice-dialog')).toBeNull();
+    expect(regenerateEncounterMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Filling 1 missing portrait — nothing is replaced');
+    });
+  });
+
+  it('a roster of ONE materialized npc-ref monster is a participant, not the empty state (the owner report)', async () => {
+    // The owner's exact shape: the prose staged two risen lumberjacks, the
+    // encounter materialized them into ONE npc artifact, and the roster holds a
+    // single `npc-ref` row — no rulebook citation, no uncited entry. This used
+    // to read "No creatures to illustrate — add roster entries first".
+    const lumberjack = { type: 'npc-ref', artifactId: 'lumberjack-1' };
+    const artifact = enc([{ name: 'Risen Lumberjack', source: lumberjack }]);
+    planMock.mockResolvedValue(plan({ missing: ['Risen Lumberjack'] }));
+    enqueueFillMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    expect(screen.queryByText(/No creatures to illustrate/i)).toBeNull();
+    expect(screen.getByTestId('mob-portraits-copy').textContent).toMatch(
+      /1 creature kind in this roster/,
+    );
+    const button = screen.getByTestId('generate-mob-portraits');
+    expect(button.hasAttribute('disabled')).toBe(false);
+    expect(button.textContent).toMatch(/Generate mob portraits \(1\)/);
+
+    const user = userEvent.setup();
+    await user.click(button);
+    await waitFor(() => {
+      // Pure gaps: it fills immediately through the ONE seam (both lanes
+      // inside it). The rulebook lane runs even though this roster has no
+      // `rulebook` citation row at all (docs/17 row 96, row 90's own lesson):
+      // a roster of nothing but `npc-ref` rows whose artifacts carry the
+      // `monsterChunkId` marker belongs to the RULEBOOK lane — which lane a
+      // row rides is the queue's routing decision (`rosterParticipantRoute`),
+      // so the surface must never gate a lane on the roster's SHAPE. It used
+      // to (`rulebookCount === 0`), and the resulting press counted a missing
+      // portrait and then enqueued nothing.
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        'Filling 1 missing portrait — nothing is replaced',
+      );
+    });
+    await flushAsyncUpdates();
+  });
+});
+
+describe('MobPortraitsSection per-entry invented confirm (unchanged)', () => {
+  it('per-entry already-imaged offers regen for that entry; Confirm regenerates, Cancel replays the old toast', async () => {
+    const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
+    enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: ['Gloom Ooze'] });
+    regenerateInventedMock.mockResolvedValue({ regenerated: 1, filled: 0 });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('create-creature-portrait-0'));
+    await screen.findByTestId('mob-portraits-regen-dialog');
+    expect(screen.getByTestId('mob-portraits-regen-dialog').textContent).toMatch(/Regenerate 1 portrait/);
+    expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(
+      /Existing covers are replaced — "Gloom Ooze"/,
+    );
+    expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(
+      /stays until the new art lands/,
+    );
+    // The batch choice never appears on the per-entry path.
+    expect(screen.queryByTestId('mob-portraits-choice-dialog')).toBeNull();
+
+    await user.click(screen.getByTestId('mob-portraits-regen-confirm'));
+    await waitFor(() => {
+      expect(regenerateInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1', [0]);
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        expect.stringMatching(/Regenerating portrait for "Gloom Ooze"/),
+      );
+    });
+    expect(toastInfoMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('per-entry Cancel keeps the old already-has-portrait toast and regenerates nothing', async () => {
+    const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
+    enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: ['Gloom Ooze'] });
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('create-creature-portrait-0'));
+    await screen.findByTestId('mob-portraits-regen-dialog');
+
+    await user.click(screen.getByTestId('mob-portraits-regen-cancel'));
+    await waitFor(() => {
+      expect(toastInfoMock).toHaveBeenCalledWith('"Gloom Ooze" already has a portrait');
+    });
+    expect(regenerateInventedMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+});
+
+/**
+ * WHY the section's two kinds of block state a reason (docs/18 §2.3, docs/05
+ * §Why a control cannot act; docs/17 row 99). The batch gate is
+ * `busy || busyIndex !== null || participantCount === 0` and the per-entry gate
+ * is `busy || busyIndex !== null`: THREE different states, and before row 99 the
+ * batch button — whose label counts participants and therefore does NOT change —
+ * said nothing about any of them.
+ */
+describe('MobPortraitsSection blocked-control reasons', () => {
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  it('the batch still STARTING states why (its label cannot say it)', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ enqueued: number; alreadyImaged: string[] }>();
+    const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
+    planMock.mockResolvedValue(plan({ missing: ['Gloom Ooze'] }));
+    enqueueFillMock.mockReturnValue(pending.promise);
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-mob-portraits')).toBeDisabled();
+    });
+    await expectBlockedReason(
+      user,
+      'generate-mob-portraits',
+      'This batch is still starting — wait for it to finish.',
+    );
+
+    pending.resolve({ enqueued: 1, alreadyImaged: [] });
+    await waitFor(() => {
+      expect(screen.queryByTestId('generate-mob-portraits-reason')).toBeNull();
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('one creature being created holds the batch AND every other entry — and the entry doing it states its own label instead', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ enqueued: number; alreadyImaged: string[] }>();
+    const artifact = enc([
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Whisper Wisp', source: NONE },
+    ]);
+    enqueueInventedMock.mockReturnValue(pending.promise);
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    await user.click(screen.getByTestId('create-creature-portrait-0'));
+    await waitFor(() => {
+      expect(screen.getByTestId('create-creature-portrait-0')).toHaveTextContent('Creating…');
+    });
+
+    const creatingReason =
+      'A creature portrait is being created right now — wait for it, or press Stop all in the progress dock.';
+    // The batch button counts participants, so its label is unchanged — the
+    // reason is the only thing that says why it is dead.
+    await expectBlockedReason(user, 'generate-mob-portraits', creatingReason);
+    // Another entry's press names the run that is holding it.
+    await expectBlockedReason(user, 'create-creature-portrait-1', creatingReason);
+    // The entry whose work is running says so on itself — self-evident.
+    expectSelfEvidentBlock('create-creature-portrait-0');
+
+    pending.resolve({ enqueued: 1, alreadyImaged: [] });
+    await waitFor(() => {
+      expect(screen.queryByTestId('create-creature-portrait-1-reason')).toBeNull();
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('SELF-EVIDENT: an empty roster is stated by the copy beside the button, so the button carries no reason', () => {
+    render(<MobPortraitsSection artifact={enc([])} campaignId="campaign-1" />);
+    expect(screen.getByTestId('mob-portraits-copy')).toHaveTextContent(
+      'No creatures to illustrate — add roster entries first.',
+    );
+    expectSelfEvidentBlock('generate-mob-portraits');
+  });
+});

@@ -1,0 +1,1197 @@
+import 'fake-indexeddb/auto';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createCampaign } from '@/db/campaignRepo';
+import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { castCreatureAsNpc } from '@/db/creatureRepo';
+import { db } from '@/db/db';
+import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
+import { createRulebook } from '@/db/rulebookRepo';
+import { updateSettings } from '@/db/settingsRepo';
+import { seedBuiltInPersonas } from '@/db/seed';
+import { runEntityBatch } from '@/features/modules/entity-batch';
+import { batchTargets } from '@/features/modules/post-generation';
+import type * as runEngineModule from '@/llm/runEngine';
+import { sha256Hex } from '@/lib/hash';
+import { CREATOR_ROSTER_TITLE_SEPARATOR, collectCreatorRoster } from '@/llm/creatorRoster';
+import { strictJsonSchema } from '@/llm/strictSchema';
+import {
+  createModule,
+  entityBestiarySlotSchema,
+  moduleEntityKindSchema,
+  moduleSpineSchema,
+  ruleChunkSchema,
+  statBlockSchema,
+  stampNewEntity,
+  withEntityBestiarySlots,
+  type Campaign,
+  type Module,
+  type ModuleEntityKind,
+} from '@/domain';
+import { clearDatabase } from '../db/helpers';
+
+/**
+ * THE MODULE-SIDE CAST — the owner's Aunt Agatha path, verbatim: *"Often
+ * modules want lets say a zombie, but its old aunt agatha. So, she will have
+ * zombie stats but with prose. This path should be easily available for mob
+ * generation (inside the module generator mainly, i think the encounter
+ * generated mobs wont need it, they should not introduce important NPCs on
+ * their own)."*
+ *
+ * What this file pins, in the owner's terms:
+ *
+ * 1. the REQUEST is expressible in the module-generation contract (an optional
+ *    `bestiary` slot on an entity record) and the encounter-generation
+ *    contracts cannot express one AT ALL (docs/17 row 107, docs/11 D5);
+ * 2. finalize CASTS through `castCreatureAsNpc` and nothing else — ONE `npc`
+ *    artifact carrying the entity's own prose and the creature's derived stats,
+ *    with no authored stat block and no persona run (so no live provider, and
+ *    no model call at all on that entity);
+ * 3. a second run REUSES that row instead of minting a twin;
+ * 4. a creature the library cannot supply — or cannot disambiguate — fails
+ *    LOUDLY, naming the entity and the creature, and finalizes nothing. The
+ *    slot's `book` is a DISAMBIGUATOR, never a veto (docs/17 row 161): a name
+ *    with exactly ONE candidate resolves whatever book the slot named, and a
+ *    slot's title is never the citation's book — the LIBRARY's title is;
+ * 5. a run that casts NOTHING composes the PRE-CHANGE prompt byte for byte
+ *    (the additive discipline, docs/18 §4), measured against the golden fixture
+ *    the pre-style builders were captured into.
+ */
+
+const { startRunMock, waitForRunStatusMock } = vi.hoisted(() => ({
+  startRunMock: vi.fn(),
+  waitForRunStatusMock: vi.fn(),
+}));
+
+// The engine is faked (this file pins the cast prompts), but the withdrawal
+// predicate is the REAL one: `runEntityBatch` reads it to tell an owner stop
+// from a failure (docs/17 row 117).
+vi.mock('@/llm/runEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof runEngineModule>();
+  return {
+    isRunWithdrawn: actual.isRunWithdrawn,
+    runNotCompletedReason: actual.runNotCompletedReason,
+    runEngine: { on: () => () => undefined, startRun: startRunMock },
+    waitForRunStatus: waitForRunStatusMock,
+  };
+});
+
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+// The generator's own transport is mocked at the protocol boundary, the same
+// seam every moduleGen test uses: the cast path must never reach a provider.
+vi.mock('@/llm/openrouter', async (importOriginal) =>
+  (await import('../helpers/openrouterMock')).openrouterMock(importOriginal, {
+    chat: vi.fn(),
+    listModels: vi.fn(),
+  }),
+);
+
+const { chat } = await import('@/llm/openrouter');
+const chatMock = vi.mocked(chat);
+
+const TEST_MODEL = 'test/fixture-model';
+const ZOMBIE = 'Zombie';
+const AGATHA = 'Aunt Agatha';
+
+const SPINE_ENTITIES = [
+  { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE } },
+  { name: 'The Walking Mill', kind: 'location', bestiary: null },
+  { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+];
+
+const PREMISE =
+  'The graveyard behind the mill has begun to walk. The villagers bar their doors at dusk and ' +
+  'count the shapes that shuffle between the stones.';
+
+/** One stat-block chunk in a book, seeded exactly the way the creature tier
+ * seeds one (the shape `db/creatureRepo` resolves and `listLibraryCreatures`
+ * pools). Returns the chunk id the citation must carry. */
+async function seedCreature(options: {
+  bookTitle: string;
+  name: string;
+  hp: number;
+  page?: number;
+  /** The printed level the window orders by (default '1'). */
+  level?: string;
+}): Promise<string> {
+  const book = await createRulebook({
+    title: options.bookTitle,
+    system: 'dnd5e',
+    filename: `${options.bookTitle.toLowerCase().replaceAll(' ', '-')}.pdf`,
+  });
+  const text = `${options.name}\nMedium undead, neutral evil\nArmor Class 8\nHit Points ${String(options.hp)}`;
+  const chunk = ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId: book.id,
+    pageStart: options.page ?? 316,
+    pageEnd: options.page ?? 316,
+    chunkType: 'statblock',
+    headingPath: [options.name],
+    text,
+    contentHash: await sha256Hex(text),
+    statBlock: statBlockSchema.parse({
+      system: 'dnd5e',
+      level: options.level ?? '1',
+      size: 'Medium',
+      creatureType: 'undead',
+      ac: 8,
+      acNote: '',
+      hp: options.hp,
+      hpFormula: '3d8+9',
+      speed: '20 ft.',
+      abilities: { str: 13, dex: 6, con: 16, int: 3, wis: 6, cha: 5 },
+      saves: 'Wis +0',
+      skills: '',
+      senses: 'darkvision 60 ft.',
+      languages: 'understands the languages it knew in life but cannot speak',
+      traits: [],
+      actions: [{ name: 'Slam', text: 'Melee Weapon Attack: +3 to hit, 1d6+1 bludgeoning.' }],
+      reactions: [],
+      legendary: [],
+      extras: {},
+    }),
+  });
+  await putChunks([chunk]);
+  return chunk.id;
+}
+
+/** A campaign + module row ready for a spine run. */
+async function seedModule(levels: { min: number; max: number } = { min: 1, max: 1 }): Promise<{
+  campaign: Campaign;
+  moduleId: string;
+}> {
+  const campaign = await createCampaign({ name: 'Millford', system: 'dnd5e' });
+  const saved = await saveModule(
+    createModule({
+      campaignId: campaign.id,
+      title: 'The Walking Mill',
+      concept: 'The village dead rise, and one of them is somebody’s aunt.',
+      levelMin: levels.min,
+      levelMax: levels.max,
+      tone: 'grief',
+      sizeDial: 'sketch',
+    }),
+  );
+  return { campaign, moduleId: saved.id };
+}
+
+/**
+ * SEEDS the module row with the premise, the plan and the entity RECORDS the
+ * (now DELETED) pass-0 spine used to produce (docs/17 row 392). The cast path
+ * reads the STORED records (`module.entityKinds`), so how a record got onto the
+ * row is not the claim under test — and with pass 0 gone the only producer left
+ * is the app's own creation/normalization path, which is not what this file
+ * measures.
+ */
+async function seedSpineWith(
+  moduleId: string,
+  entities: unknown[] = SPINE_ENTITIES,
+  premise = PREMISE,
+): Promise<Module> {
+  const current = await getModule(moduleId);
+  if (current === undefined) throw new Error('the seeded module is missing');
+  return saveModule({
+    ...current,
+    status: 'draft',
+    errorMessage: '',
+    spine: moduleSpineSchema.parse({
+      premise,
+      themes: ['grief', 'small-town silence'],
+      partPlan: [
+        {
+          title: 'The Walking Mill',
+          levelBand: '1',
+          synopsis: 'The party arrives as the first of the risen is recognized.',
+          levelUpTrigger: 'The party learns whose grave was opened first.',
+        },
+      ],
+    }),
+    entityKinds: entities.map((entity) =>
+      moduleEntityKindSchema.parse({ absorbed: [], ...(entity as Record<string, unknown>) }),
+    ),
+  });
+}
+
+/** Gives the approved spine a finished part whose text mentions the entity. */
+async function seedPart(moduleId: string, markdown: string): Promise<void> {
+  await patchModule(moduleId, {
+    status: 'ready',
+    parts: [
+      {
+        planIndex: 0,
+        markdown,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+        writerModel: TEST_MODEL,
+        origin: null,
+      },
+    ],
+  });
+}
+
+const AGATHA_PROSE =
+  'The mill wheel turns though the race is dry. [[Aunt Agatha]] stands at the gate with the ' +
+  'flour still on her hands, and she does not blink.\n\n' +
+  'They buried Aunt Agatha in the spring, and the mill has not turned since.';
+
+/** The same two paragraphs, padded well past the entity-brief substance floor.
+ * Both paragraphs name her, so `surroundingParagraphs` (which keeps the
+ * paragraphs that mention the entity) returns `AGATHA_PROSE` itself. */
+const LONG_ENOUGH_PROSE = `${AGATHA_PROSE}\n\n${'The lane beyond the gate is churned to mud and nobody walks it after dark. '.repeat(3)}`;
+
+beforeEach(async () => {
+  await clearDatabase();
+  await updateSettings({ defaultChatModel: TEST_MODEL });
+});
+
+afterEach(async () => {
+  chatMock.mockReset();
+  startRunMock.mockReset();
+  waitForRunStatusMock.mockReset();
+  vi.restoreAllMocks();
+  await clearDatabase();
+});
+
+describe('the request is expressible in the module-generation contract', () => {
+  it('the entity record accepts the bestiary slot, and stays additive when it is absent', () => {
+    expect(
+      moduleEntityKindSchema.parse({
+        name: AGATHA,
+        kind: 'npc',
+        absorbed: [],
+        bestiary: { creature: ZOMBIE },
+      }).bestiary,
+    ).toEqual({ creature: ZOMBIE });
+    expect(
+      moduleEntityKindSchema.parse({
+        name: AGATHA,
+        kind: 'npc',
+        absorbed: [],
+        bestiary: { creature: ZOMBIE, book: 'Bestiary' },
+      }).bestiary,
+    ).toEqual({ creature: ZOMBIE, book: 'Bestiary' });
+
+    // ADDITIVE: a record that asks for nothing simply does not carry the key —
+    // which is exactly what every record written before the field parses into.
+    const withoutSlot = moduleEntityKindSchema.parse({ name: 'The Walking Mill', kind: 'location' });
+    expect(withoutSlot).toEqual({ name: 'The Walking Mill', kind: 'location', absorbed: [] });
+    expect('bestiary' in withoutSlot).toBe(false);
+    // …and an explicit null — the strict contract's way of saying "no cast" —
+    // reads the same as an absent key.
+    expect(
+      moduleEntityKindSchema.parse({ name: 'The Walking Mill', kind: 'location', bestiary: null })
+        .bestiary,
+    ).toBeUndefined();
+  });
+
+  it('REFUSES a malformed slot — an unnamed creature, an unnamed book, a non-object', () => {
+    expect(entityBestiarySlotSchema.safeParse({ creature: '' }).success).toBe(false);
+    expect(entityBestiarySlotSchema.safeParse({ creature: '   ' }).success).toBe(false);
+    expect(entityBestiarySlotSchema.safeParse({ creature: ZOMBIE, book: '' }).success).toBe(false);
+    expect(entityBestiarySlotSchema.safeParse({ creature: ZOMBIE, book: '  ' }).success).toBe(false);
+    expect(
+      moduleEntityKindSchema.safeParse({ name: AGATHA, kind: 'npc', bestiary: ZOMBIE }).success,
+    ).toBe(false);
+    expect(
+      moduleEntityKindSchema.safeParse({ name: AGATHA, kind: 'npc', bestiary: { book: 'Bestiary' } })
+        .success,
+    ).toBe(false);
+  });
+
+  it('survives name normalization by carrying the request onto the canonical record', () => {
+    const source: ModuleEntityKind[] = [
+      { name: 'Aunt Agatha', kind: 'npc', absorbed: ['Old Agatha'], bestiary: { creature: ZOMBIE } },
+    ];
+    const canonical: ModuleEntityKind[] = [
+      { name: 'Aunt Agatha', kind: 'npc', absorbed: ['Old Agatha'] },
+    ];
+    expect(withEntityBestiarySlots(canonical, source)[0]?.bestiary).toEqual({ creature: ZOMBIE });
+
+    // A name whose spelling the pass CANONICALIZED keeps its request: the
+    // variant it was written under still resolves to that canonical.
+    const renamed: ModuleEntityKind[] = [{ name: 'Agatha', kind: 'npc', absorbed: ['Old Agatha'] }];
+    expect(withEntityBestiarySlots(renamed, source)[0]?.bestiary).toEqual({ creature: ZOMBIE });
+
+    // Nothing to carry ⇒ the record comes back untouched (no key invented).
+    expect(withEntityBestiarySlots(canonical, canonical)[0]).toEqual(canonical[0]);
+  });
+
+  it('refuses LOUDLY when one canonical is answered by two different creatures', () => {
+    // The normalizer folded the variant onto the canonical, and the two source
+    // records ask for different creatures: picking one would silently re-stat
+    // her, so the carry REFUSES instead (AGENTS rule 1).
+    const source: ModuleEntityKind[] = [
+      { name: 'Agatha', kind: 'npc', absorbed: ['Aunt Agatha'], bestiary: { creature: ZOMBIE } },
+      { name: 'Aunt Agatha', kind: 'npc', absorbed: [], bestiary: { creature: 'Ghoul' } },
+    ];
+    const canonical: ModuleEntityKind[] = [
+      { name: 'Agatha', kind: 'npc', absorbed: ['Aunt Agatha'] },
+    ];
+    expect(() => withEntityBestiarySlots(canonical, source)).toThrow(
+      /two different library creatures/,
+    );
+  });
+});
+
+describe('the encounter-generation side cannot express a cast (docs/11 D5, docs/17 row 107)', () => {
+  /**
+   * EXTENDS the roster-side absence pin in `tests/db/creatureRepo.test.ts`
+   * ("no encounter data can express a cast — the schema drops the field
+   * outright", which reads the encounter ARTIFACT's data schema). This one
+   * reads the GENERATION contracts the model is asked to answer — the Smith's
+   * draft and the Cartographer's brief, roster entries included — because the
+   * generator is the side that may ASK for a cast and the encounter side must
+   * not even be able to speak it.
+   */
+  it('no encounter generation contract carries a bestiary slot or a cast flag', async () => {
+    const { encounterDraftSchema, encounterGeneratorBriefSchema } = await import('@/llm/schemas');
+
+    /** Every property name anywhere in one emitted contract. */
+    const propertyNames = (node: unknown, found = new Set<string>()): Set<string> => {
+      if (node === null || typeof node !== 'object') return found;
+      if (Array.isArray(node)) {
+        for (const member of node) propertyNames(member, found);
+        return found;
+      }
+      const record = node as Record<string, unknown>;
+      const properties = record.properties;
+      if (properties !== null && typeof properties === 'object') {
+        for (const [name, value] of Object.entries(properties as Record<string, unknown>)) {
+          found.add(name);
+          propertyNames(value, found);
+        }
+      }
+      for (const value of Object.values(record)) propertyNames(value, found);
+      return found;
+    };
+
+    for (const [name, schema] of [
+      ['encounter-draft', encounterDraftSchema],
+      ['encounter-brief', encounterGeneratorBriefSchema],
+    ] as const) {
+      const emitted = strictJsonSchema(name, schema).schema;
+      const names = propertyNames(emitted);
+      expect([...names]).not.toContain('bestiary');
+      expect([...names]).not.toContain('cast');
+      // The roster side's whole vocabulary is a CITATION, and it stays that.
+      expect([...names]).toContain('sourceChunkIndex');
+    }
+  });
+
+  it('the cast function has no encounter-path caller (the asymmetry is an ABSENCE)', async () => {
+    const fs = await import('node:fs/promises');
+    const sources = await Promise.all([
+      fs.readFile('src/llm/runEngine.ts', 'utf8'),
+      fs.readFile('src/llm/encounterRoster.ts', 'utf8'),
+      fs.readFile('src/llm/schemas.ts', 'utf8'),
+    ]);
+    for (const source of sources) {
+      expect(source).not.toContain('castCreatureAsNpc');
+      expect(source).not.toContain('bestiarySlotForEntity');
+    }
+    // The sweep's encounter lane keeps routing to the ROSTER generator, never
+    // to a cast: the batch's cast branch is reachable only for `kind === 'npc'`.
+    // AMENDED by docs/17 row 302: the guard is now BOUND to `castArm` before the
+    // LEVEL-AWARE resolution, because a designed level miss must fall THROUGH to
+    // the authored path — so the scan follows the expression that carries the
+    // same fact, with `kind === 'npc'` still gating it.
+    const batch = await fs.readFile('src/features/modules/entity-batch.ts', 'utf8');
+    expect(batch).toContain(
+      "const castArm = slot !== null && kind === 'npc' && target.artifactId === undefined;",
+    );
+  });
+});
+
+describe('finalize: the cast path', () => {
+  it('ONE npc artifact carries the entity’s prose and a COPY of the creature’s stats, and no pointer', async () => {
+    const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    const saved = await seedSpineWith(moduleId);
+
+    // The slot the model asked for RODE the pass AND the normalization call.
+    expect(saved.entityKinds.find((entry) => entry.name === AGATHA)?.bestiary).toEqual({
+      creature: ZOMBIE,
+    });
+    expect(
+      saved.entityKinds.find((entry) => entry.name === 'The Walking Mill')?.bestiary,
+    ).toBeUndefined();
+
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    // The engine is FAKED here (this file pins the cast prompts), so the
+    // description run must be given a completed refill to land on: the row it
+    // just cast is the destination the engine answers with.
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    // A cast is NOT a generated artifact: the run below writes PROSE into a row
+    // it did not create.
+    expect(result.generated).toEqual([]);
+    // THE DESCRIPTION RUN IS ALWAYS SPENT (docs/17 rows 133/135): the module's
+    // mention is the material the description is written FROM, never the
+    // description itself, so there is no case where it stands in for one. With
+    // the engine faked (it writes nothing) the row keeps the prose the CAST was
+    // born with; what the real refill writes into it, and the statblock
+    // step-off that precedes it, are pinned against the REAL engine in
+    // `tests/features/entity-batch-cast-description.test.ts`.
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    const runInput = startRunMock.mock.calls[0]?.[0] as {
+      targetArtifactId?: string;
+      placementModuleId?: string;
+    };
+    expect(runInput.targetArtifactId).toBeDefined();
+    expect(runInput.placementModuleId).toBeUndefined();
+    // …and the faked engine reaches no transport at all: the cast path makes no
+    // model call of its own, and the pass-0 spine's two calls are DELETED
+    // (docs/17 row 392), so the whole run is silent on the transport.
+    expect(chatMock).toHaveBeenCalledTimes(0);
+
+    const npcs = (await listArtifactsByCampaign(campaign.id)).filter((row) => row.name === AGATHA);
+    expect(npcs).toHaveLength(1);
+    const npc = npcs[0];
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    // The run was aimed AT the row the cast made — a refill, never a twin.
+    expect(runInput.targetArtifactId).toBe(npc.id);
+    // Her stats are the LIBRARY creature's — COPIED onto the row (docs/17 row
+    // 255b), with the origin line stamped and the portrait token kept — and she
+    // mints no pointer.
+    expect((npc.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
+    expect(npc.data.originToken).toBe(`chunk:${zombieChunkId}`);
+    expect(npc.data.statBlock?.hp).toBe(22);
+    expect(npc.data.sourceLine).toBe('Bestiary p.316');
+    // Her OWN name and the prose the cast born her with (the faked engine wrote
+    // nothing over it).
+    expect(npc.name).toBe(AGATHA);
+    expect(npc.body).toContain('the flour still on her hands');
+    expect(npc.body).toContain('They buried Aunt Agatha in the spring');
+  });
+
+  it('a SECOND run reuses that row — never a twin', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    // Each batch's description run answers with a completed refill of the row it
+    // just cast (the engine is faked in this file).
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+
+    const first = await getModule(moduleId);
+    if (first === undefined) throw new Error('module row is missing');
+    const firstResult = await runEntityBatch({
+      module: first,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    const second = await getModule(moduleId);
+    if (second === undefined) throw new Error('module row is missing');
+    const secondResult = await runEntityBatch({
+      module: second,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(firstResult.failed).toEqual([]);
+    expect(secondResult.failed).toEqual([]);
+    expect(firstResult.cast).toEqual([AGATHA]);
+    expect(secondResult.cast).toEqual([AGATHA]);
+    const rows = (await listArtifactsByCampaign(campaign.id)).filter(
+      (row) => row.kind === 'npc' && row.name === AGATHA,
+    );
+    expect(rows).toHaveLength(1);
+    expect(secondResult.produced[0]?.artifactId).toBe(firstResult.produced[0]?.artifactId);
+    // ONE row, refilled twice: each of the two targets above was HAND-SUPPLIED
+    // (this file drives the batch directly), and each spent its own description
+    // run against the SAME row.
+    expect(startRunMock).toHaveBeenCalledTimes(2);
+    expect(
+      startRunMock.mock.calls.map((call) => (call[0] as { targetArtifactId?: string }).targetArtifactId),
+    ).toEqual([rows[0]?.id, rows[0]?.id]);
+    // THE PRODUCTION SEAL, and the reason the second target cannot arise from a
+    // real surface: after the first batch the row CARRIES a detailed entity, so
+    // the name is no longer a batch target at all (docs/17 rows 133/135 —
+    // `post-generation.batchTargets` filters on `hasDetailedEntity`, which is
+    // what replaced row 133's no-clobber guard on the row's own body).
+    expect(batchTargets(second, rows, 'npc')).toEqual([]);
+  });
+
+  it('an unresolvable creature name fails LOUDLY, naming the entity and the creature, and finalizes nothing', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    // NO recorded level on the entity, deliberately: the resolution keeps its
+    // pre-302 loud refusal. WITH a recorded level the same slot is AUTHORED at
+    // that level instead (docs/17 row 302) — the fallback arm, pinned in
+    // `tests/features/entity-batch-cast-description.test.ts` and beside this
+    // file's level-preference arm.
+    const { campaign, moduleId } = await seedModule({ min: 1, max: 3 });
+    await seedSpineWith(moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'Bog Shambler' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.cast).toEqual([]);
+    expect(result.produced).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    const failure = result.failed[0];
+    expect(failure?.name).toBe(AGATHA);
+    expect(failure?.message).toContain(AGATHA);
+    expect(failure?.message).toContain('Bog Shambler');
+    expect(failure?.message).toContain('no creature of that name');
+    // LOUD through the SAME convention every per-entity failure uses: the batch
+    // collects it into `failed` (message + entity name) and its callers surface
+    // that list — `entity-panel` toasts it, `post-generation` toasts it and
+    // names the kind, `entity-detail`/`change-artifact` put the message in the
+    // failure they raise. Never a silent skip, never console-only.
+    expect(failure?.message).toContain('bestiary cast');
+    // NOTHING was finalized — her prose was not silently dropped into a
+    // statless twin.
+    expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual(
+      [],
+    );
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
+  it('an AMBIGUOUS creature name is refused by name, and the book slot disambiguates it', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, page: 316 });
+    await seedCreature({ bookTitle: 'Tome of Horrors', name: ZOMBIE, hp: 40, page: 12 });
+
+    const ambiguous = await seedModule();
+    await seedSpineWith(ambiguous.moduleId);
+    await seedPart(ambiguous.moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const ambiguousRow = await getModule(ambiguous.moduleId);
+    if (ambiguousRow === undefined) throw new Error('module row is missing');
+    const refused = await runEntityBatch({
+      module: ambiguousRow,
+      campaign: ambiguous.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+    expect(refused.failed).toHaveLength(1);
+    expect(refused.failed[0]?.message).toContain('2 creatures of that name');
+    expect(refused.failed[0]?.message).toContain('name the book');
+
+    const named = await seedModule();
+    await seedSpineWith(named.moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Tome of Horrors' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(named.moduleId, LONG_ENOUGH_PROSE);
+    const namedRow = await getModule(named.moduleId);
+    if (namedRow === undefined) throw new Error('module row is missing');
+    const cast = await runEntityBatch({
+      module: namedRow,
+      campaign: named.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+    expect(cast.failed).toEqual([]);
+    expect(cast.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(named.campaign.id)).find(
+      (row) => row.name === AGATHA,
+    );
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    const tomeChunk = (await db.chunks.toArray()).find((chunk) => chunk.statBlock?.hp === 40);
+    // The book slot disambiguated the name: the copy came off the Tome chunk,
+    // which its origin token names (docs/17 row 255b).
+    expect(npc.data.originToken).toBe(`chunk:${tomeChunk?.id}`);
+  });
+
+  it('the owner’s case: a LOCALISED book title on a UNIQUE creature RESOLVES, stamped with the LIBRARY’s book', async () => {
+    const chunkId = await seedCreature({
+      bookTitle: 'Pathfinder Monster Core',
+      name: 'Plague Zombie',
+      hp: 22,
+    });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId, [
+      // The slot a GERMAN module's spine really wrote, from the owner's own
+      // report: the creature's name as the library spells it, and the pack title
+      // LOCALISED — "Monsterkern" is Monster Core, which is not a book that
+      // exists. Before docs/17 row 161 this refused a cast whose answer was
+      // unique, naming the very creature it refused to use.
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'Plague Zombie', book: 'Monsterkern' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(npc.data.originToken).toBe(`chunk:${chunkId}`);
+    // THE STAMP IS THE LIBRARY'S TITLE, never the model's «Monsterkern»
+    // (docs/17 row 155): the disclosure has to name a pack that actually
+    // exists, so a slot's book can never become the copy's origin line.
+    expect(npc.data.sourceLine).toBe('Pathfinder Monster Core p.316');
+  });
+
+  it('a NON-matching book on an AMBIGUOUS name is refused, listing the candidates and their real books', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, page: 316 });
+    await seedCreature({ bookTitle: 'Tome of Horrors', name: ZOMBIE, hp: 40, page: 12 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Monsterkern' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    // Two creatures share the name and the slot's book holds neither: the cast
+    // must NOT pick one silently (docs/17 row 161, rule 3), and the refusal
+    // lists both candidates WITH the book each really comes from — which is the
+    // whole remedy, since naming the book is what the slot is for.
+    expect(result.cast).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.message).toContain('2 creatures of that name');
+    expect(result.failed[0]?.message).toContain('Bestiary');
+    expect(result.failed[0]?.message).toContain('Tome of Horrors');
+    expect(startRunMock).not.toHaveBeenCalled();
+  });
+
+  it('a module with NO slot is untouched: the entity goes down the persona path', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: null },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'completed',
+      resultArtifactId: null,
+      errorMessage: '',
+      steps: [],
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.cast).toEqual([]);
+    // The persona path ran, exactly as it did before this arc.
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual(
+      [],
+    );
+  });
+});
+
+describe('the cast path names real creatures (docs/17 row 114 regression)', () => {
+  it('casts the creature the WINDOW listed, by the name the window printed', async () => {
+    const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+
+    // What the prompt showed is what the slot answers with: the NAME half of the
+    // line the model copies IS a resolvable name. Since docs/17 row 163 the line
+    // carries the pack title after the separator, and the emitted rule says the
+    // name is the part BEFORE it — so the name is what this pin feeds the cast,
+    // and the title half is what a citation stamps.
+    const roster = await collectCreatorRoster(1);
+    expect(roster.lines).toEqual([`${ZOMBIE}${CREATOR_ROSTER_TITLE_SEPARATOR}Bestiary`]);
+    const listed = roster.lines[0]?.split(CREATOR_ROSTER_TITLE_SEPARATOR)[0];
+    if (listed === undefined) throw new Error('the window is empty');
+    const printedTitle = roster.lines[0]?.split(CREATOR_ROSTER_TITLE_SEPARATOR)[1];
+    expect(printedTitle).toBe('Bestiary');
+
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(npc.data.originToken).toBe(`chunk:${zombieChunkId}`);
+    // The title the window PRINTED is the title the stamped origin line
+    // RECORDS, byte for byte — which is what makes a copied title a working
+    // disambiguator (docs/17 rows 114/155/255b).
+    expect(npc.data.sourceLine).toBe(`${printedTitle} p.316`);
+  });
+
+  it('refuses a NEAR MISS by naming the nearest creatures, and stays silent when nothing is close', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: 'Zombie-Schläger', hp: 22 });
+
+    // RANGE bands throughout, so NO level is recorded for the entity: this arm
+    // exists for the pre-302 refusal (docs/17 row 114) and that refusal is what
+    // an entity WITHOUT a recorded level still gets. WITH one, the same near
+    // miss is authored at that level and the same nearest-creature list rides
+    // the notice's `reason` — see row 302's own arms below.
+    const near = await seedModule({ min: 1, max: 3 });
+    await seedSpineWith(near.moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'zombie schlager' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(near.moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const nearRow = await getModule(near.moduleId);
+    if (nearRow === undefined) throw new Error('module row is missing');
+    const refused = await runEntityBatch({
+      module: nearRow,
+      campaign: near.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(refused.failed).toHaveLength(1);
+    const message = refused.failed[0]?.message ?? '';
+    // The resolution was NOT loosened: the umlaut/hyphen/case variant still
+    // fails, and nothing was written.
+    expect(message).toContain('no creature of that name');
+    // …but the refusal is now ACTIONABLE: it names the creature the library
+    // actually holds, with the book it comes from.
+    expect(message).toContain('the nearest creatures this library holds: Zombie-Schläger (Bestiary)');
+    expect(refused.cast).toEqual([]);
+    expect((await listArtifactsByCampaign(near.campaign.id)).filter((row) => row.kind === 'npc')).toEqual(
+      [],
+    );
+
+    // A query with nothing close keeps the pre-114 sentence: the suggestion is
+    // appended only when there is something worth naming.
+    const far = await seedModule({ min: 1, max: 3 });
+    await seedSpineWith(far.moduleId, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'Ancient Red Dragon' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(far.moduleId, LONG_ENOUGH_PROSE);
+    const farRow = await getModule(far.moduleId);
+    if (farRow === undefined) throw new Error('module row is missing');
+    const cleaned = await runEntityBatch({
+      module: farRow,
+      campaign: far.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+    const cleanedMessage = cleaned.failed[0]?.message ?? '';
+    expect(cleanedMessage).toContain('no creature of that name');
+    expect(cleanedMessage).not.toContain('the nearest creatures this library holds');
+  });
+});
+
+/**
+ * THE CAST HONOURS THE ENTITY'S RECORDED LEVEL (docs/17 row 302). The owner,
+ * verbatim: *"Level should really be honored since difficulty is tuned to it. If
+ * no mob can be found at that level that is close enough, generate one."*
+ *
+ * The batch's side of that rule, pinned here with the engine faked:
+ *
+ * - a slot whose library creature sits at ANOTHER level, with a same-name
+ *   creature AT the recorded level available, casts the RIGHT-level chunk (the
+ *   seam's own arms live in `tests/domain/library-creature-seam.test.ts`);
+ * - the module's recorded slot STAYS after the run — the cast is an INTENT
+ *   re-evaluated per run, so importing the right-level creature later casts it.
+ *
+ * The FULL arm — no candidate at the level, so the entity is authored with a
+ * MINTED block at that level, no citation, and the notice on the report funnel —
+ * drives the REAL engine in `tests/features/entity-batch-cast-description.test.ts`,
+ * because a faked engine writes no artifact and cannot prove a minted block.
+ */
+describe("the cast honours the entity's recorded level (docs/17 row 302)", () => {
+  it('casts the creature AT the recorded level, not the one at another level', async () => {
+    const lowChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, level: '1' });
+    const rightChunkId = await seedCreature({
+      bookTitle: 'Tome of Horrors',
+      name: ZOMBIE,
+      hp: 40,
+      level: '3',
+    });
+    // The npc record carries the LEVEL the module author fixed for her — the
+    // stored structured hint the cast honours (docs/17 row 302). The pass-0
+    // spine used to stamp an exact band onto the record (row 247); that
+    // stamping's only caller is DELETED with pass 0 (docs/17 row 392), so the
+    // record is seeded with the hint it would have carried.
+    const { campaign, moduleId } = await seedModule({ min: 3, max: 3 });
+    await seedSpineWith(
+      moduleId,
+      SPINE_ENTITIES.map((entity) =>
+        entity.name === AGATHA ? { ...entity, levelHint: 3 } : entity,
+      ),
+    );
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    expect(module.entityKinds.find((entry) => entry.name === AGATHA)?.levelHint).toBe(3);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    // No fallback: something at level 3 existed, so this is a cast and no notice
+    // was raised.
+    expect(result.notices).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(npc.data.originToken).toBe(`chunk:${rightChunkId}`);
+    expect(npc.data.originToken).not.toBe(`chunk:${lowChunkId}`);
+    // THE INTENT SURVIVES: the module still asks for the creature, so a later
+    // import that supplies the level re-resolves on the next run.
+    const after = await getModule(moduleId);
+    expect(after?.entityKinds.find((entry) => entry.name === AGATHA)?.bestiary).toEqual({
+      creature: ZOMBIE,
+    });
+  });
+});
+
+/**
+ * THE DESCRIPTION A CAST ROW OWES THE MODULE TEXT (docs/17 row 133, docs/11
+ * §The module-side cast) — the BATCH's own decision, with the engine faked (the
+ * full run through the real engine, and the prose it actually writes, are pinned
+ * in `tests/features/entity-batch-cast-description.test.ts`).
+ *
+ * The owner, verbatim in substance: *"When the module creates an NPC inside the
+ * TEXT ... that means that this NPC absolutely needs a description, even if its
+ * just a zombie. What happens right now is that those named zombies only get an
+ * image on their details, nothing more. No text, no stat block, nothing."* The
+ * cast stays — its numbers are the library's and its citation is its identity —
+ * and the DESCRIPTION is authored by the entity's own persona, THROUGH the cited
+ * row's existing refill (the only sanctioned write into a cast row): the run is
+ * aimed at the cast row, never at a new artifact.
+ */
+const NAMED_ONLY_PROSE = '**The risen:** [[Aunt Agatha]] and [[Zombie]].';
+
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
+
+describe('a cast row the module text only NAMES is given an authored description (docs/17 row 133)', () => {
+  it('aims the entity’s own run AT THE CAST ROW: a refill, never a new artifact and never a placement', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    await seedPart(moduleId, NAMED_ONLY_PROSE);
+    await seedBuiltInPersonas();
+    // The refill answers with the row it filled — the shape `runFinalize` has
+    // for a targeted run.
+    startRunMock.mockImplementation(
+      (input: { targetArtifactId?: string }) => `run-${input.targetArtifactId ?? 'none'}`,
+    );
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      // Exactly what the engine writes for a refill: the row it filled.
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    // Still a CAST (the artifact is the cast's — library numbers, citation
+    // identity), never a `generated` artifact: the run wrote PROSE into a row it
+    // did not create.
+    expect(result.cast).toEqual([AGATHA]);
+    expect(result.generated).toEqual([]);
+    const castNpc = (await listArtifactsByCampaign(campaign.id)).find(
+      (artifact) => artifact.name === AGATHA,
+    );
+    if (castNpc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(result.produced[0]?.artifactId).toBe(castNpc.id);
+
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    const input = startRunMock.mock.calls[0]?.[0] as {
+      targetArtifactId?: string;
+      placementModuleId?: string;
+      brief?: string;
+      autonomy?: string;
+    };
+    // THE ROW, not a new artifact: the refill's own contract.
+    expect(input.targetArtifactId).toBe(castNpc.id);
+    // …and no placement: a run that carries both is refused by the engine, and
+    // an existing artifact's scope changes only through explicit scope moves.
+    expect(input.placementModuleId).toBeUndefined();
+    expect(input.autonomy).toBe('auto');
+    // The entity's own brief (the same one the persona path builds): the mention
+    // is what the model is grounded in, and the name rule rides it.
+    expect(input.brief).toContain(`Detail the entity "${AGATHA}" for this module.`);
+    expect(input.brief).toContain(`must be exactly "${AGATHA}"`);
+    // The mention IS handed to the model — it is thin, not absent.
+    expect(input.brief).toContain('[[Aunt Agatha]]');
+  });
+
+  it('a run the OWNER stopped writes no failure: the cast stands, silently (row 117)', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    await seedPart(moduleId, NAMED_ONLY_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'cancelled',
+      resultArtifactId: null,
+      errorMessage: '',
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    // A deliberate stop is not a failure at EITHER arm of the batch.
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    expect(result.generated).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE OWNER-RULED INVERSION (docs/17 row 135, reversing part of row 133).
+   * This pin used to be titled "the module's OWN prose decides … is not given a
+   * second, invented description" and asserted `startRunMock` was NEVER called.
+   * The owner ruled that away — *"An NPC is named if its a wikilink in the
+   * module text. Because that link IS the name."* / *"Author a description
+   * anyway."* — so the run IS spent, and what the module's paragraphs decide is
+   * only what the description is written FROM.
+   */
+  it('a row an EARLIER cast made is the row this run refills — the module’s own prose does not stand in for the description', async () => {
+    const chunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    // The text DESCRIBES her — under row 133 that alone meant "no run".
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    // …and the row for her was cast EARLIER (the bestiary's "spawn into module",
+    // or a previous batch): its prose is its birth prose.
+    const earlier = await castCreatureAsNpc({
+      campaignId: campaign.id,
+      moduleId,
+      citation: { chunkId, creatureName: ZOMBIE },
+      name: AGATHA,
+      prose: { body: 'The risen stand in the lane.' },
+    });
+    // A completed refill of THAT row: the shape the real engine answers with for
+    // a targeted run (this file's engine is faked).
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'completed',
+      resultArtifactId: earlier.artifactId,
+      errorMessage: '',
+      steps: [],
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    // THE INVERSION, in one line: the description run happens anyway, and it is
+    // aimed at the row the EARLIER cast made — never a twin, never a new
+    // artifact, and never the module's paragraph standing in for a description.
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    const input = startRunMock.mock.calls[0]?.[0] as {
+      targetArtifactId?: string;
+      placementModuleId?: string;
+      brief?: string;
+    };
+    expect(input.targetArtifactId).toBe(earlier.artifactId);
+    expect(input.placementModuleId).toBeUndefined();
+    // …written FROM the module's own paragraphs: they ride the brief as context.
+    expect(input.brief).toContain('The mill wheel turns though the race is dry');
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    expect(result.produced[0]?.artifactId).toBe(earlier.artifactId);
+    // The engine is faked in this file, so it writes nothing over the row — the
+    // real refill's bytes (and the statblock step-off) are pinned against the
+    // real engine in `tests/features/entity-batch-cast-description.test.ts`.
+    const after = await getArtifact(earlier.artifactId);
+    expect(after?.body).toBe('The risen stand in the lane.');
+    // AND THE PRODUCTION SEAL on this arm: the target above was HAND-SUPPLIED.
+    // The row makes her a detailed entity, so no real surface would hand her to
+    // the batch — `batchTargets` is empty (docs/17 rows 133/135).
+    expect(batchTargets(module, await listArtifactsByCampaign(campaign.id), 'npc')).toEqual([]);
+  });
+
+  it('a description run the PAGE ate is its own class: `interrupted`, never "the generator refused"', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    await seedPart(moduleId, NAMED_ONLY_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    // An interruption is status `failed` with the ENGINE's own classification —
+    // NOT `cancelled` (that is the withdrawal above, which stays silent).
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'failed',
+      resultArtifactId: null,
+      errorMessage: '',
+      failureKind: 'cancelled',
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    const [failure] = result.failed;
+    // `interrupted` is the class that says "the page reloaded while this ran",
+    // and the run's own classification rides the record beside it.
+    expect(failure?.kind).toBe('interrupted');
+    expect(failure?.failureKind).toBe('cancelled');
+    expect(failure?.runId).toBe('run-1');
+    expect(result.cast).toEqual([AGATHA]);
+  });
+
+  it('a run that completes without writing anything is its OWN sentence, not the artifact one', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await seedSpineWith(moduleId);
+    await seedPart(moduleId, NAMED_ONLY_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    // Completed, and nothing to show for it: the anomaly a refill can report.
+    // The row is ONE object, kept here — the record's `raw` is asserted by
+    // IDENTITY below, because a deep-equal copy would prove nothing about what
+    // the reporting layer actually receives.
+    const completedEmpty = {
+      status: 'completed',
+      resultArtifactId: null,
+      errorMessage: '',
+      steps: [],
+    };
+    waitForRunStatusMock.mockResolvedValue(completedEmpty);
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    // The record is the ONE mapping every failed run goes through (docs/17 rows
+    // 128/131) — with the sentence for THIS destination: the artifact existed
+    // before the run, so "producing an artifact" would be a lie about it.
+    const [failure] = result.failed;
+    expect(failure).toEqual({
+      name: AGATHA,
+      kind: 'run-not-completed',
+      message: 'the run completed without writing the description',
+      runId: 'run-1',
+      status: 'completed',
+      errorMessage: '',
+      raw: completedEmpty,
+    });
+    expect(failure?.raw).toBe(completedEmpty);
+    // The cast still landed: the row exists, and the entity is reported as a
+    // cast AND as a failed description — the one case that appears in both.
+    expect(result.cast).toEqual([AGATHA]);
+    expect(result.produced).toHaveLength(1);
+  });
+});

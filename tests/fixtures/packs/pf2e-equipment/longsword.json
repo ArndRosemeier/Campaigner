@@ -1,0 +1,34 @@
+{
+  "_id": "LJdbVTOZog39EEbi",
+  "name": "Longsword",
+  "type": "weapon",
+  "img": "icons/weapons/swords/sword-guard-blue.webp",
+  "system": {
+    "level": {
+      "value": 0
+    },
+    "price": {
+      "value": {
+        "gp": 1
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "value": [
+        "versatile-p"
+      ]
+    },
+    "description": {
+      "value": "<p>Longswords, also known as arming swords, can be one-edged or two-edged swords. Their blades are heavy and they're between 3 and 4 feet in length.</p>"
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder Player Core"
+    },
+    "bulk": {
+      "value": 1
+    },
+    "rules": []
+  }
+}

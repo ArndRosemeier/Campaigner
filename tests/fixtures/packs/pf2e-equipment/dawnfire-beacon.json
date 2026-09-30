@@ -1,0 +1,101 @@
+{
+  "_id": "GhIBjLO1h90L7BCp",
+  "name": "Dawnfire Beacon",
+  "type": "equipment",
+  "img": "icons/sundries/flags/banner-blue.webp",
+  "system": {
+    "level": {
+      "value": 3
+    },
+    "price": {
+      "value": {
+        "cp": 0,
+        "gp": 45,
+        "pp": 0,
+        "sp": 0
+      }
+    },
+    "traits": {
+      "rarity": "uncommon",
+      "value": [
+        "aura",
+        "light",
+        "magical"
+      ]
+    },
+    "description": {
+      "value": "<p>The warm, caring light of the sun glows from the center of this magical banner, mirroring the dawn. This magical banner exudes bright light in the banner's aura (and dim light in an area equal to twice the banner's aura). This effect is suppressed when you aren't holding the banner or wielding the weapon it is affixed to.</p>"
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder Battlecry!"
+    },
+    "bulk": {
+      "value": 0
+    },
+    "rules": [
+      {
+        "key": "RollOption",
+        "label": "PF2E.SpecificRule.Equipment.Banner.CommandersBanner",
+        "mergeable": true,
+        "option": "magical-commanders-banner",
+        "predicate": [
+          "feature:commanders-banner"
+        ],
+        "suboptions": [
+          {
+            "label": "{item|name}",
+            "value": "dawnfire-beacon"
+          }
+        ],
+        "toggleable": true
+      },
+      {
+        "key": "Aura",
+        "level": 3,
+        "predicate": [
+          {
+            "not": "magical-commanders-banner:dawnfire-beacon"
+          }
+        ],
+        "radius": 30
+      },
+      {
+        "key": "Aura",
+        "level": 3,
+        "predicate": [
+          "magical-commanders-banner:dawnfire-beacon",
+          "commanders-banner"
+        ],
+        "radius": 30,
+        "slug": "commanders-banner"
+      },
+      {
+        "key": "TokenLight",
+        "value": {
+          "alpha": 0.1,
+          "animation": {},
+          "bright": 30,
+          "coloration": 101,
+          "dim": 60
+        }
+      },
+      {
+        "key": "TokenLight",
+        "predicate": [
+          "magical-commanders-banner:dawnfire-beacon",
+          "commanders-banner",
+          "feat:glorious-banner"
+        ],
+        "value": {
+          "alpha": 0.1,
+          "animation": {},
+          "bright": 60,
+          "coloration": 101,
+          "dim": 120
+        }
+      }
+    ]
+  }
+}

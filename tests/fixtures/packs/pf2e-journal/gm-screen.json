@@ -1,0 +1,76 @@
+{
+  "_id": "S55aqwWIzpQRFhcq",
+  "categories": [],
+  "name": "GM Screen",
+  "ownership": {
+    "default": 0
+  },
+  "pages": [
+    {
+      "_id": "9e26SSQNYcyizEQ2",
+      "category": null,
+      "image": {},
+      "name": "Bonuses and Penalties",
+      "sort": -500000,
+      "src": null,
+      "system": {},
+      "text": {
+        "content": "<h2>Bonuses</h2><p>If you have different types of bonuses that would apply to the same roll, you'll add them all. But if you have multiple bonuses of the same type, you can use only the highest bonus on a given roll—they aren't cumulative.</p><h3>Proficiency bonus</h3><table border=\"1\" class=\"pf2e remaster\"><thead><tr style=\"text-align:right\"><th>Proficiency Rank</th><th>Proficiency Bonus</th></tr></thead><tbody><tr><td>Untrained</td><td>0</td></tr><tr><td>Trained</td><td>Your level + 2</td></tr></tbody></table><h3>Circumstance bonuses</h3><p>Involve the situation you find yourself in when attempting a check.</p><h3>Item bonuses</h3><p>Are granted by some item that you are wearing or using, either mundane or magical.</p><h3>Status bonuses</h3><p>Typically come from spells, other magical effects, or something applying a helpful, often temporary, condition to you.</p><h2>Penalties</h2><p>Penalties work very much like bonuses. You can have <strong>circumstance penalties</strong>, <strong>status</strong> <strong>penalties</strong>, and sometimes even <strong>item</strong> penalties. Like bonuses of the same type, you take only the worst all of various penalties of a given type.</p><hr /><p><em>Section: Playing the Game</em><span style=\"float:right\"><em>Pathfinder Player Core pg. 400</em></span></p>",
+        "format": 1
+      },
+      "title": {
+        "level": 2,
+        "show": true
+      },
+      "type": "text",
+      "video": {
+        "controls": true,
+        "volume": 0.5
+      }
+    },
+    {
+      "_id": "WZgFEMDSP9TvYc4u",
+      "category": null,
+      "image": {},
+      "name": "Encounter Budget",
+      "sort": 2900000,
+      "src": null,
+      "system": {},
+      "text": {
+        "content": "<table border=\"1\" class=\"pf2e remaster\"><thead><tr style=\"text-align:right\"><th>Difficulty</th><th>XP Budget</th><th>Character Adjustment</th></tr></thead><tbody><tr><td>Trivial</td><td>40 or less</td><td>10 or less</td></tr><tr><td>Low</td><td>60</td><td>20</td></tr><tr><td>Moderate</td><td>80</td><td>20</td></tr><tr><td>Severe</td><td>120</td><td>30</td></tr><tr><td>Extreme</td><td>160</td><td>40</td></tr></tbody></table><p><em>Section: Running the Game</em><span style=\"float:right\"><em>Pathfinder GM Core pg. 75</em></span></p>",
+        "format": 1
+      },
+      "title": {
+        "level": 2,
+        "show": true
+      },
+      "type": "text",
+      "video": {
+        "controls": true,
+        "volume": 0.5
+      }
+    },
+    {
+      "_id": "4UWkvpoPam213lQH",
+      "category": null,
+      "image": {},
+      "name": "Running the Game",
+      "sort": 2050000,
+      "src": null,
+      "system": {},
+      "text": {
+        "content": "<p>Sources:</p><ul><li><p>Pathfinder GM Core</p></li><li><p>Pathfinder Monster Core</p></li></ul>",
+        "format": 1
+      },
+      "title": {
+        "level": 1,
+        "show": true
+      },
+      "type": "text",
+      "video": {
+        "controls": true,
+        "volume": 0.5
+      }
+    }
+  ]
+}

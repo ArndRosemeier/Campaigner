@@ -1,0 +1,55 @@
+# Campaigner - Apache config for domainfactory / futuremagic.de
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # RewriteBase is patched by deploy-sync.ps1 to match -BasePath
+  RewriteBase /Campaigner/
+
+  # HTTPS IS REQUIRED, and this is where it is enforced (docs/17 row 262). On http
+  # the service worker, `navigator.storage` and the clipboard are all silently
+  # unavailable, so every iPad hardening in that row is worth less until this
+  # redirect holds. SCOPED TO THIS DIRECTORY on purpose: the domain root serves
+  # other content, and this file only governs the app path.
+  #
+  # THE X-Forwarded-Proto TEST IS NOT BELT-AND-BRACES: nginx fronts this host, so
+  # Apache can see plain http on a request that arrived over TLS, and a rule that
+  # tested %{HTTPS} alone would redirect forever. Both conditions must hold before
+  # anything is redirected, and `!https` (a negated substring test) also accepts a
+  # comma-separated forwarded list.
+  RewriteCond %{HTTPS} !on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,QSA]
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/javascript .js
+  AddType application/javascript .mjs
+  AddType application/wasm .wasm
+  AddType application/json .json
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|gif|png|svg|woff2?|mjs|wasm)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(html|json)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+
+  # THE SERVICE WORKER MUST NOT BE IMMUTABLE. The rule above matches `sw.js` like
+  # any other `.js` file, so a year-long cache means the browser never revalidates
+  # the worker and the app never receives an update (found live by docs/17 row
+  # 262's platform sweep). This block comes AFTER it deliberately: for the same
+  # header the LAST directive wins, and `sw.js` is a fixed filename with no content
+  # hash to bust a cache for us. Revalidate it; the hashed assets stay immutable.
+  <FilesMatch "^sw\.js$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

@@ -1,0 +1,10 @@
+Campaign: Ember (Pathfinder 2e)
+
+Task: a goblin alchemist boss for a level 5 party
+
+No rule excerpts available.
+
+Field guidance for this NPC:
+- "needsStatBlock": true only when the character is likely to fight or their stats matter at the table (adversaries, rivals, guards, bosses); false for contacts, merchants, innkeepers, informants, quest-givers.
+
+Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","appearance","personality","needsStatBlock"]

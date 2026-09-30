@@ -1,0 +1,300 @@
+import 'fake-indexeddb/auto';
+
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
+import { createArtifact } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { getModule, saveModule } from '@/db/moduleRepo';
+import { createModule, type AnyArtifact, type ModuleDifficulty } from '@/domain';
+import type * as ChangeArtifactModule from '@/features/modules/change-artifact';
+import type * as ToastModule from '@/lib/toast';
+import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
+
+/**
+ * The routed UI call site (docs/17 row 101, docs/18 §2): the artifact editor's
+ * two encounter actions must reach the ENGINE — and they must reach it THROUGH
+ * the one seam, not around it. Both halves are asserted:
+ *
+ * - `changeArtifact` is a PASS-THROUGH spy around the real seam, so the click
+ *   proves the component's engine call goes through it (a component calling a
+ *   specialist directly would leave the spy uncalled);
+ * - the specialist behind the seam is a spy too, so the click proves the chain
+ *   button → seam → `encounterRegen` still arrives (a seam that swallowed the
+ *   request would leave it uncalled).
+ *
+ * The surface's own behaviour is pinned unchanged: its success sentence, its
+ * `Could not …` sentence on a failure, and the fact that a failure stays LOUD
+ * (AGENTS 2) now that the engine call is one indirection deeper.
+ */
+
+const { repopulateMock, regenerateMock, toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
+  repopulateMock: vi.fn(),
+  regenerateMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+  toastSuccessMock: vi.fn(),
+}));
+
+vi.mock('@/features/campaign/encounterRegen', () => ({
+  repopulateEncounter: repopulateMock,
+  regenerateEncounterEverything: regenerateMock,
+}));
+
+vi.mock('@/lib/toast', async (importOriginal) => {
+  const actual = await importOriginal<typeof ToastModule>();
+  return { ...actual, toastError: toastErrorMock, toastSuccess: toastSuccessMock };
+});
+
+vi.mock('@/features/modules/change-artifact', async (importOriginal) => {
+  const actual = await importOriginal<typeof ChangeArtifactModule>();
+  return { ...actual, changeArtifact: vi.fn(actual.changeArtifact) };
+});
+
+const { changeArtifact } = await import('@/features/modules/change-artifact');
+const changeArtifactMock = vi.mocked(changeArtifact);
+
+async function seedEncounter(): Promise<{ campaignId: string; encounter: AnyArtifact }> {
+  const campaign = await createCampaign({ name: 'Gate Campaign', system: 'dnd5e' });
+  const encounter = await createArtifact({
+    campaignId: campaign.id,
+    kind: 'encounter',
+    name: 'Gate Ambush',
+    summary: 'A gate fight.',
+    body: 'The gate.',
+    data: {
+      difficulty: 'medium',
+      levelHint: '', partyLevel: 3,
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+    },
+  });
+  return { campaignId: campaign.id, encounter };
+}
+
+function renderEditor(encounter: AnyArtifact, campaignId: string): void {
+  // A module-owned encounter renders the editor's "Open in module" link and the
+  // run-battle action, both of which need a router — the module difficulty
+  // tests below own their encounters, so the harness provides one (docs/17 row
+  // 195). Campaign-level tests are unaffected.
+  render(
+    <MemoryRouter>
+      <ArtifactEditor
+        artifact={encounter}
+        campaignId={campaignId}
+        campaignArtifacts={[encounter]}
+        campaignSystem="dnd5e"
+      />
+    </MemoryRouter>,
+  );
+}
+
+async function clickAction(testId: 'encounter-repopulate' | 'encounter-regenerate-everything'): Promise<void> {
+  const user = userEvent.setup();
+  const section = screen.getByTestId('encounter-ai-section');
+  await user.click(within(section).getByTestId(testId));
+  await waitFor(() => {
+    expect(changeArtifactMock).toHaveBeenCalled();
+  });
+}
+
+beforeEach(async () => {
+  await clearDatabase();
+  repopulateMock.mockReset();
+  regenerateMock.mockReset();
+  toastErrorMock.mockReset();
+  toastSuccessMock.mockReset();
+  changeArtifactMock.mockClear();
+  repopulateMock.mockResolvedValue(undefined);
+  regenerateMock.mockResolvedValue(undefined);
+});
+
+describe('the editor\u2019s encounter actions route through the change seam', () => {
+  it('Repopulate goes button → seam → the specialist, and toasts the same sentence', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    renderEditor(encounter, campaignId);
+
+    await clickAction('encounter-repopulate');
+
+    expect(changeArtifactMock).toHaveBeenCalledWith({
+      artifactId: encounter.id,
+      encounter: { operation: 'repopulate', redesignProse: false },
+    });
+    // …through the seam, into the engine (forwarded untouched).
+    expect(repopulateMock).toHaveBeenCalledWith(encounter.id, { redesignProse: false });
+    expect(regenerateMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Encounter repopulated — a new roster stocks every room, map kept',
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('Regenerate everything reaches the other specialist, through the same seam', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    renderEditor(encounter, campaignId);
+
+    await clickAction('encounter-regenerate-everything');
+
+    expect(changeArtifactMock).toHaveBeenCalledWith({
+      artifactId: encounter.id,
+      encounter: { operation: 'everything', redesignProse: false },
+    });
+    expect(regenerateMock).toHaveBeenCalledWith(encounter.id, { redesignProse: false });
+    expect(repopulateMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Encounter regenerated — new roster, new layout, new map',
+    );
+  });
+
+  it('a specialist failure still reaches the owner loudly (the surface\u2019s own sentence + the cause)', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    repopulateMock.mockRejectedValueOnce(new Error('The Encounter Smith persona is missing'));
+    renderEditor(encounter, campaignId);
+
+    await clickAction('encounter-repopulate');
+
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not repopulate the encounter',
+      expect.objectContaining({ message: 'The Encounter Smith persona is missing' }),
+    );
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it('a held Repopulate offers NO description — the other action\u2019s run states its reason once, in the wrapper', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    // The OTHER action stays in flight, which is the one held state whose own
+    // label says nothing on Repopulate ("Repopulate" would still be its label).
+    regenerateMock.mockImplementation(() => new Promise(() => undefined));
+    renderEditor(encounter, campaignId);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('encounter-regenerate-everything'));
+    await waitFor(() => {
+      expect(regenerateMock).toHaveBeenCalled();
+    });
+
+    // The reason is stated by the wrapper — the device the owner can perceive
+    // (docs/18 §2.3) — and the description is NOT offered: `title` and
+    // `disabled` read the SAME gate expression, so a control that cannot act
+    // never advertises what pressing it would do (docs/18 §4, ledger 126).
+    await expectBlockedReason(
+      user,
+      'encounter-repopulate',
+      'Regenerate everything is running right now — wait for it.',
+    );
+    expect(screen.getByTestId('encounter-repopulate')).not.toHaveAttribute('title');
+  }, 30_000);
+});
+
+/**
+ * The difficulty control in the encounter section (docs/17 row 195): the SAME
+ * `ModuleDifficultyControl` the New Module dialog mounts, here beside
+ * Repopulate, showing the owning module's CURRENT difficulty and writing the
+ * module row through the repo's own patch. The write is asserted against the
+ * REAL Dexie row — a mocked repo would prove nothing about `module.difficulty`.
+ */
+async function seedModuleEncounter(difficulty: ModuleDifficulty | null): Promise<{
+  campaignId: string;
+  moduleId: string;
+  encounter: AnyArtifact;
+}> {
+  const campaign = await createCampaign({ name: 'Difficulty Campaign', system: 'dnd5e' });
+  const module = await saveModule(
+    createModule({
+      campaignId: campaign.id,
+      title: 'Tunable Module',
+      concept: 'a tunable module',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'standard',
+      ...(difficulty === null ? {} : { difficulty }),
+    }),
+  );
+  const encounter = await createArtifact({
+    campaignId: campaign.id,
+    moduleId: module.id,
+    kind: 'encounter',
+    name: 'Tunable Fight',
+    summary: 'A tunable fight.',
+    body: 'The fight.',
+    data: {
+      difficulty: '',
+      levelHint: '', partyLevel: 2,
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+    },
+  });
+  return { campaignId: campaign.id, moduleId: module.id, encounter };
+}
+
+describe('the encounter editor edits the owning module’s difficulty (docs/17 row 195)', () => {
+  it('renders the ONE shared control beside Repopulate, showing the current difficulty', async () => {
+    const { campaignId, encounter } = await seedModuleEncounter('harder');
+    renderEditor(encounter, campaignId);
+
+    const section = screen.getByTestId('encounter-ai-section');
+    expect(within(section).getByTestId('encounter-repopulate')).toBeInTheDocument();
+    const control = await within(section).findByTestId('encounter-module-difficulty');
+    expect(within(control).getByTestId('encounter-module-difficulty-harder')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('writes module.difficulty on the owning module row — a real DB write', async () => {
+    const { campaignId, moduleId, encounter } = await seedModuleEncounter('normal');
+    renderEditor(encounter, campaignId);
+    const control = await screen.findByTestId('encounter-module-difficulty');
+    const user = userEvent.setup();
+
+    await user.click(within(control).getByTestId('encounter-module-difficulty-much-harder'));
+
+    await waitFor(async () => {
+      expect((await getModule(moduleId))?.difficulty).toBe('much-harder');
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Module difficulty set to Much harder — restock to build the fights at it',
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('a module with NO recorded difficulty reads Normal — the legacy compat reading', async () => {
+    const { campaignId, moduleId, encounter } = await seedModuleEncounter(null);
+    // The row really is fieldless (createModule stamps null for no explicit choice).
+    expect((await getModule(moduleId))?.difficulty ?? null).toBeNull();
+    renderEditor(encounter, campaignId);
+
+    const control = await screen.findByTestId('encounter-module-difficulty');
+    expect(within(control).getByTestId('encounter-module-difficulty-normal')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('a campaign-level encounter states honestly that it has no module difficulty', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    renderEditor(encounter, campaignId);
+
+    expect(await screen.findByTestId('encounter-module-difficulty-none')).toBeInTheDocument();
+    expect(screen.queryByTestId('encounter-module-difficulty')).not.toBeInTheDocument();
+  });
+});

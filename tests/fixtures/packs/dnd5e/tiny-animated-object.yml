@@ -1,0 +1,142 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/summons/tiny-animated-object.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+_id: oT08GcXHkvnKJTdA
+name: Tiny Animated Object
+type: npc
+system:
+  abilities:
+    str:
+      value: 4
+      proficient: 0
+    dex:
+      value: 18
+      proficient: 0
+    con:
+      value: 10
+      proficient: 0
+    int:
+      value: 3
+      proficient: 0
+    wis:
+      value: 3
+      proficient: 0
+    cha:
+      value: 1
+      proficient: 0
+  attributes:
+    ac:
+      flat: 18
+      calcs:
+        - natural
+      formulas: []
+    hp:
+      value: 20
+      max: 20
+      temp: null
+      tempmax: null
+      formula: '20'
+    movement:
+      walk: '30'
+      units: null
+      hover: false
+      ignoredDifficultTerrain: []
+    senses:
+      units: ft
+      special: blind beyond this radius;
+      ranges:
+        darkvision: null
+        blindsight: 30
+        tremorsense: null
+        truesight: null
+    spellcasting: int
+  details:
+    alignment: Unaligned
+    type:
+      value: construct
+    cr: null
+  traits:
+    size: tiny
+    languages:
+      value: []
+      custom: Understands the languages you know
+      communication: {}
+    di:
+      bypasses: []
+      value:
+        - poison
+        - psychic
+      custom: ''
+    dr:
+      bypasses: []
+      value: []
+      custom: ''
+    dv:
+      bypasses: []
+      value: []
+      custom: ''
+    ci:
+      value:
+        - charmed
+        - exhaustion
+        - frightened
+        - paralyzed
+        - poisoned
+      custom: ''
+  skills: {}
+items:
+  - _id: PNzpo05K0eIY8XKq
+    name: Slam
+    type: weapon
+    system:
+      proficient: null
+      properties: []
+      type:
+        value: natural
+        baseItem: ''
+      range:
+        units: ft
+        value: null
+        long: null
+        reach: null
+      damage:
+        versatile:
+          types: []
+          custom:
+            enabled: false
+          scaling:
+            number: 1
+          modifiers: []
+        base:
+          number: 1
+          denomination: 4
+          bonus: ''
+          types:
+            - bludgeoning
+            - piercing
+            - slashing
+          custom:
+            enabled: false
+      activities:
+        5W8UxPLYzzTZU2sc:
+          type: attack
+          activation:
+            type: action
+            value: null
+            condition: ''
+            override: false
+          attack:
+            ability: ''
+            bonus: '8'
+            flat: true
+            critical:
+              threshold: null
+            type:
+              value: ''
+              classification: ''
+          damage:
+            includeBase: true
+            parts: []
+            critical:
+              bonus: ''

@@ -1,0 +1,35 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/tradegoods/copper.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Copper
+system:
+  description:
+    value: >-
+      <p>Coveted by advanced shipwrights, alchemists, certain jewelers, and chefs alike, copper is commonly surface
+      mined but underground mining exists when surface sources have been depleted or unable to be located.</p>
+
+      <p>Although it can be used for armor, it is far better mixed with tin to make the much more superior bronze alloy
+      for military needs.</p>
+    chat: ""
+  price:
+    value: 5
+    denomination: sp
+  rarity: ""
+  source:
+    custom: ""
+    book: ""
+    page: ""
+    license: CC-BY-4.0
+    rules: "2014"
+  properties: []
+  type:
+    value: trade
+    subtype: ""
+  quantity: 1
+  weight:
+    value: 1
+    units: lb
+_id: aXWzDW0huOa0WuIO
+type: loot
+ownership:
+  default: 0

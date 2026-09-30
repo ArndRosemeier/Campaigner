@@ -1,0 +1,257 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/humanoid/goblin.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+_id: TjWQOgI3A4UAl7lC
+name: Goblin
+type: npc
+system:
+  abilities:
+    str:
+      value: 8
+      proficient: 0
+    dex:
+      value: 14
+      proficient: 0
+    con:
+      value: 10
+      proficient: 0
+    int:
+      value: 10
+      proficient: 0
+    wis:
+      value: 8
+      proficient: 0
+    cha:
+      value: 8
+      proficient: 0
+  attributes:
+    ac:
+      flat: null
+      calc: default
+      formula: ''
+    hp:
+      value: 7
+      max: 7
+      temp: 0
+      tempmax: 0
+      formula: 2d6
+    movement:
+      burrow: 0
+      climb: 0
+      fly: 0
+      swim: 0
+      walk: 30
+      units: ft
+      hover: false
+    senses:
+      darkvision: 60
+      blindsight: 0
+      tremorsense: 0
+      truesight: 0
+      units: ft
+      special: ''
+    spellcasting: ''
+  details:
+    alignment: Neutral Evil
+    type:
+      value: humanoid
+      subtype: Goblinoid
+      swarm: ''
+      custom: ''
+    environment: Underdark
+    cr: 0.25
+  traits:
+    size: sm
+    languages:
+      value:
+        - common
+        - goblin
+      custom: ''
+    di:
+      value: []
+      bypasses: []
+      custom: ''
+    dr:
+      value: []
+      bypasses: []
+      custom: ''
+    dv:
+      value: []
+      bypasses: []
+      custom: ''
+    ci:
+      value: []
+      custom: ''
+  skills:
+    ste:
+      value: 2
+      ability: dex
+items:
+  - _id: Ti3XQOmTKdgcnpAa
+    name: Leather Armor
+    type: equipment
+    system:
+      equipped: true
+      type:
+        value: light
+        baseItem: leather
+      armor:
+        value: 11
+        dex: null
+        magicalBonus: null
+  - _id: sSs3hSzkKBMNBgTs
+    name: Shield
+    type: equipment
+    system:
+      equipped: true
+      type:
+        value: shield
+        baseItem: ''
+      armor:
+        value: 2
+        dex: null
+        magicalBonus: null
+  - _id: SxVatHq02vURYDt3
+    name: Nimble Escape
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>The [[lookup @name lowercase]]{monster} can take the &amp;reference[Disengage] or &amp;reference[Hide]
+          action as a bonus action on each of its turns.</p>
+      activities:
+        3Vnkh4NwfhWSFwKy:
+          type: check
+          activation:
+            type: bonus
+            value: null
+            condition: ''
+            override: false
+        Vgf3UERrWoMNgZ5s:
+          type: utility
+          activation:
+            type: bonus
+            value: null
+            condition: ''
+            override: false
+  - _id: S6UTTLu0bEB32HNG
+    name: Scimitar
+    type: weapon
+    system:
+      proficient: 1
+      properties:
+        - fin
+        - lgt
+      type:
+        value: martialM
+        baseItem: scimitar
+      range:
+        value: null
+        long: null
+        units: ft
+        reach: null
+      damage:
+        versatile:
+          number: null
+          denomination: null
+          bonus: ''
+          types: []
+          custom:
+            enabled: false
+            formula: ''
+          scaling:
+            mode: ''
+            number: null
+            formula: ''
+        base:
+          number: 1
+          denomination: 6
+          bonus: ''
+          types:
+            - slashing
+          custom:
+            enabled: false
+            formula: ''
+      activities:
+        dnd5eactivity000:
+          type: attack
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false
+          attack:
+            ability: dex
+            bonus: ''
+            flat: false
+            critical:
+              threshold: null
+            type:
+              value: melee
+              classification: weapon
+          damage:
+            includeBase: true
+            parts: []
+            critical:
+              bonus: ''
+  - _id: YqS3dsIlpWb2Q2UI
+    name: Shortbow
+    type: weapon
+    system:
+      proficient: 1
+      properties:
+        - two
+        - amm
+      type:
+        value: simpleR
+        baseItem: shortbow
+      range:
+        value: 80
+        long: 320
+        units: ft
+        reach: null
+      damage:
+        versatile:
+          number: null
+          denomination: null
+          bonus: ''
+          types: []
+          custom:
+            enabled: false
+            formula: ''
+          scaling:
+            mode: ''
+            number: null
+            formula: ''
+        base:
+          number: 1
+          denomination: 6
+          bonus: ''
+          types:
+            - piercing
+          custom:
+            enabled: false
+            formula: ''
+      activities:
+        dnd5eactivity000:
+          type: attack
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false
+          attack:
+            ability: dex
+            bonus: ''
+            flat: false
+            critical:
+              threshold: null
+            type:
+              value: ranged
+              classification: weapon
+          damage:
+            includeBase: true
+            parts: []
+            critical:
+              bonus: ''

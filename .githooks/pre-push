@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# The CHEAP PRE-PUSH TIER (docs/17 row 426, owner-approved): the two checks that
+# run on EVERY host in about a minute and catch what has actually reached the
+# Linux gate red from a host that cannot run the suite (Windows: no setsid):
+#   1. the compile tier — `GATE_TESTS=0 scripts/gate.sh` (typecheck; exit 2 =
+#      compiled clean, the suite did not run — that is this tier's PASS);
+#   2. the architecture pins — source scans, the board's bounds, the docs-only
+#      rule, the one-X-seam pins (seconds).
+# It is not the gate: the full suite still runs on the Linux host after the push.
+#
+# Enabled per clone with `git config core.hooksPath .githooks`. A push that must
+# skip it (a docs-only emergency) uses `git push --no-verify` and SAYS so in the
+# report — never silently.
+set -u
+root="$(git rev-parse --show-toplevel)"
+cd "$root" || exit 1
+mkdir -p .gate-logs
+log=".gate-logs/pre-push-$(date +%Y%m%dT%H%M%S).log"
+
+echo "pre-push: compile tier (typecheck)…"
+GATE_TESTS=0 bash scripts/gate.sh >"$log" 2>&1
+compile=$?
+if [ "$compile" -ne 2 ]; then
+  echo "pre-push: BLOCKED — the compile tier exited $compile (2 = clean). Raw log: $log"
+  exit 1
+fi
+
+echo "pre-push: architecture pins…"
+CAMPAIGNER_TEST_WORKERS=2 node_modules/.bin/vitest run tests/architecture/ >>"$log" 2>&1
+pins=$?
+if [ "$pins" -ne 0 ]; then
+  echo "pre-push: BLOCKED — an architecture pin is red. Failing tests (raw log: $log):"
+  grep -E "^ FAIL " "$log" | sort -u
+  exit 1
+fi
+echo "pre-push: compile clean, architecture pins green (log: $log)"

@@ -1,0 +1,176 @@
+import 'fake-indexeddb/auto';
+
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  createModule as buildModule,
+  moduleSpineSchema,
+  ruleChunkSchema,
+  SPELL_DC_MISSING_MARKER,
+  stampNewEntity,
+  statBlockSchema,
+  type AnyArtifact,
+  type SpellData,
+} from '@/domain';
+import { createArtifact } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { saveModule } from '@/db/moduleRepo';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { buildModulePdf, buildModulePdfDocument } from '@/lib/modulePdf';
+import { realSpell } from '../helpers/spellFixtures';
+import { clearDatabase } from '../db/helpers';
+
+/**
+ * A mob's spells reach the PRINTED stat box (docs/17 row 184) — the PDF half of
+ * the chip surfaces. The bytes are the SAME `mobSpellChipDetail` the in-app chip
+ * shows, so the book and the screen cannot disagree about what a spell does at
+ * the rank the mob casts it.
+ *
+ * The definition is CAPTURED (the `generate` seam `buildModulePdf` already
+ * takes) and asserted as text: pdfmake has no DOM here, and the document's own
+ * JSON is the printable truth. The spell fixture read is the ONE helper
+ * (`tests/helpers/spellFixtures`, docs/17 row 373).
+ */
+
+async function seedSpellBook(spell: SpellData): Promise<void> {
+  const book = await createPackBook({
+    title: 'PF2e Spells',
+    system: 'pathfinder2e',
+    filename: 'spells.json',
+  });
+  const finished = await finalizePackBook(book.id, {
+    sourceId: 'test-spells',
+    license: 'ORC',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  await putChunks([
+    ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: finished.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'spell',
+      headingPath: ['Spells', 'Fireball'],
+      text: 'Fireball\nSource: Pathfinder Player Core (ORC)',
+      statBlock: null,
+      contentHash: 'd'.repeat(64),
+      spellData: spell,
+    }),
+  ]);
+}
+
+async function seedModule(
+  spellFields: Record<string, unknown> = { spells: [{ name: 'Fireball', castRank: 5 }] },
+): Promise<{ module: Awaited<ReturnType<typeof saveModule>>; artifacts: AnyArtifact[] }> {
+  const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+  const npc = await createArtifact({
+    campaignId: campaign.id,
+    kind: 'npc',
+    name: 'Grix',
+    body: 'She brews.',
+    data: {
+      appearance: 'Soot-stained',
+      personality: 'Manic',
+      statBlock: statBlockSchema.parse({
+        system: 'pathfinder2e',
+        level: '5',
+        size: 'Small',
+        creatureType: 'goblinoid',
+        ac: 20,
+        acNote: '',
+        hp: 60,
+        hpFormula: '',
+        speed: '25 feet',
+        abilities: { str: 14, dex: 16, con: 14, int: 16, wis: 12, cha: 10 },
+        saves: '',
+        skills: '',
+        senses: '',
+        languages: 'Goblin',
+        traits: [],
+        actions: [],
+        reactions: [],
+        legendary: [],
+        extras: {},
+        ...spellFields,
+      }),
+    },
+  });
+  const module = await saveModule({
+    ...buildModule({
+      campaignId: campaign.id,
+      title: 'Beneath the Docks',
+      concept: 'A drowned vault.',
+      levelMin: 1,
+      levelMax: 5,
+      tone: '',
+      sizeDial: 'standard',
+    }),
+    spine: moduleSpineSchema.parse({
+      premise: 'The alchemist [[Grix]] waits below.',
+      themes: [],
+      partPlan: [{ title: 'The Docks', levelBand: '1-5', synopsis: 'Meet the alchemist.', levelUpTrigger: 'None.' }],
+    }),
+  });
+  return { module, artifacts: [npc] };
+}
+
+beforeEach(clearDatabase);
+
+describe('a mob spell reaches the printed stat box (docs/17 row 184)', () => {
+  it('prints the values at the CAST rank through the shared chip detail', async () => {
+    await seedSpellBook(await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json'));
+    const { module, artifacts } = await seedModule();
+
+    let captured: unknown = null;
+    await buildModulePdf(module, artifacts, (definition) => {
+      captured = definition;
+      return Promise.resolve(new Blob(['pdf']));
+    });
+
+    const text = JSON.stringify(captured);
+    expect(text).toContain('cast at rank 5: 10d6 fire');
+    expect(text).toContain('heightening: interval');
+  });
+
+  it('prints a LOUD line — never a silent drop — when a direct build has no spell index', async () => {
+    const { module, artifacts } = await seedModule();
+
+    // `buildModulePdfDocument` is the sync seam a direct caller uses; it is
+    // given no corpus, and the block's spell must still be visible in the book.
+    const { definition } = buildModulePdfDocument({ module, artifacts });
+    const text = JSON.stringify(definition);
+    expect(text).toContain('resolved none');
+    expect(text).toContain('re-export from the app');
+  });
+
+  it('prints the caster line — the SAME bytes the card shows (docs/17 row 201)', async () => {
+    await seedSpellBook(await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json'));
+    const { module, artifacts } = await seedModule({
+      spells: [{ name: 'Fireball', castRank: 5 }],
+      spellDC: 25,
+      spellAttack: 17,
+      tradition: 'arcane',
+    });
+
+    let captured: unknown = null;
+    await buildModulePdf(module, artifacts, (definition) => {
+      captured = definition;
+      return Promise.resolve(new Blob(['pdf']));
+    });
+
+    expect(JSON.stringify(captured)).toContain('Spell DC 25 · spell attack +17 · tradition arcane');
+  });
+
+  it('prints the LOUD marker — never a computed DC — for a caster that states none', async () => {
+    const { module, artifacts } = await seedModule({ spells: [{ name: 'Fireball', castRank: 5 }] });
+
+    const { definition } = buildModulePdfDocument({ module, artifacts });
+    const text = JSON.stringify(definition);
+    expect(text).toContain(SPELL_DC_MISSING_MARKER);
+    // The level-5 block would suggest a DC, and none may be printed for it.
+    expect(text).not.toContain('Spell DC');
+  });
+});

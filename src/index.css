@@ -1,0 +1,314 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* UI scale (05-UI.md §Settings Appearance card): default keeps the browser's
+     16px root until the store rehydrates and applyUiScale writes the var. */
+  --ui-scale: 1;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+    /* UI scale (05-UI.md §Settings Appearance card): the app is rem-based
+       (Tailwind v4 default scale, shadcn on rem), so one root font-size var
+       scales spacing, text and radii app-wide. px-measured surfaces — the
+       battle board, dice stage, PDF canvas — are deliberately unaffected.
+       NOT CSS zoom: it breaks board/pointer px math (docs/18 §2.3). */
+    font-size: calc(16px * var(--ui-scale));
+  }
+
+  /* Tablet (05-UI.md §Tablet): the double-tap-to-zoom viewport gesture steals
+     the second click of a fast double click on small controls. `manipulation`
+     opts interactive elements out of double-tap zoom while keeping pinch zoom
+     and panning (page zoom itself stays enabled for accessibility). */
+  button,
+  a,
+  [role='button'],
+  summary,
+  [data-slot='select-trigger'],
+  [data-slot='tabs-trigger'],
+  [data-slot='context-menu-trigger'] {
+    touch-action: manipulation;
+  }
+
+  /* Tablet (05-UI.md §Tablet, docs/17 row 262a): on iOS a long-press on the
+     board's map/token <img>s raises the image callout ("Save Image", the
+     selection loupe). `touch-action: none` does not suppress it, and the
+     callout's `pointercancel` lands in `onBoardPointerCancel`, which abandons
+     the drag with no commit and no toast — the token simply snaps back. The
+     suppression belongs on the DRAGGABLE SURFACE (the board element, which
+     already owns `touch-none` and the pointer stream), not on the whole
+     surface: the toolbar and rail keep their text selectable for the GM. */
+  [data-slot='battle-board'] {
+    -webkit-touch-callout: none;
+  }
+
+  /* Tablet (05-UI.md §Tablet): the dense controls a desktop pointer handles
+     fine are under finger size. Grow the hit box without moving the layout —
+     an absolutely-positioned pseudo-element is part of the button's hit-test
+     area, so ±6px turns a 32px button into a 44px target with no visual
+     change. Sub-32px button sizes (xs/sm/icon-xs/icon-sm) carry a 44px
+     coarse-pointer minimum in buttonVariants, so the pad only tops them up.
+     Checkbox, resizable-handle and tabs-trigger hit areas are widened at the
+     component level (see those files) for the same 44px coarse target. */
+  @media (pointer: coarse) {
+    [data-slot='button'] {
+      position: relative;
+    }
+    [data-slot='button']::after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+      border-radius: inherit;
+    }
+  }
+}
+
+/* Progress dock: indeterminate sweep — a third-width fill slides the full
+   track, left to right, for tasks with unknown progress (00-OVERVIEW). */
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.progress-indeterminate {
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+
+/* Reader search (08-MODULE-DESIGNER M4-C): transient highlight on the block
+   containing the active match. Applied imperatively by ReaderSearch on an
+   existing element — React owns the tree, so only the class comes and goes. */
+.search-hit {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  border-radius: 3px;
+  background-color: rgb(245 158 11 / 0.12);
+}
+
+/* 3D dice stage (09-MILESTONE-5 M5-D amendment): the dice-box engine injects
+   its own canvas; it must fill the fixed stage and stay click-transparent —
+   dice animate over the board, users never touch the physics layer. */
+.dice-stage .dice-box-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none;
+}
+
+/* Fog, the opaque blocking veil kind (09-MILESTONE-5 M5-D, fog-cloud
+   amendment): an animated CLOUD, never a flat slab. Owner report, verbatim:
+   "Right now its just a white opaque rectangle. I would like this to be
+   grey-ish and animated, cloudy with some contrast, not just mushy."
+
+   OPAQUE IS THE MECHANIC (ledger 65): fog hides map area, so every layer here
+   is an alpha-free grey and the element carries no `opacity-*`, no
+   `mix-blend-mode` and no element-level transparency — the map must never
+   read through it. The cloud look comes from `background-blend-mode`, which
+   blends ONLY this element's own background layers (never the board behind
+   it), and from the neutral edges of each layer: `lighten` leaves the
+   backdrop untouched where a layer is black, `darken` leaves it untouched
+   where a layer is white, so the base grey survives and the tiles have no
+   visible seam.
+
+   NO PER-FRAME REPAINT (docs/17 row 264). The drift used to animate
+   `background-position`, which is not a compositor property: with
+   `background-blend-mode` in play every frame was a full repaint of a blended
+   (on WebKit, often software-rasterized) layer, once per fog rect, forever.
+   The cloud is now ONE blended texture on an oversized inner layer that is
+   moved by `transform` — a compositor-only change, rasterized once. The
+   `-clip` box is what keeps the drift inside the fog rect; it sits INSIDE the
+   veil so the veil's 44 px edge handles (which protrude past the rect) are
+   never clipped with it. The inter-layer parallax the old keyframes gave is
+   gone: with one composite you get one velocity, and three separately
+   transformed layers would need `mix-blend-mode` — a per-frame blend of its
+   own, i.e. the cost this removes.
+
+   Motion only, no opacity or geometry change, so it can never fight the
+   selection ring, the drag lift or the tap threshold. `prefers-reduced-
+   motion: reduce` stops the drift and keeps the cloud: a static cloud, never
+   "no fog". */
+.battle-fog-cloud {
+  /* ONE definition of the base grey: the element's own backdrop AND the
+     bottom of the blend stack below. */
+  --battle-fog-base: #a1a1aa;
+  background-color: var(--battle-fog-base);
+}
+
+/* The clip box: exactly the fog rect, hiding the drift's overspill. */
+.battle-fog-cloud-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* The drifting cloud: one 150%-sized blended texture, moved by transform.
+   `background-size` is scaled by the same 1.5 so the cloud reads at the size
+   it did when these gradients lived on the rect itself. The translate stays
+   well inside the 25% overspill on every side, so no edge is ever exposed.
+   THE PRICE OF COMPOSITING: the layer is rasterized at 2.25x the fog rect's
+   area (it is one raster, not a per-frame repaint), and the drift is now a
+   fraction of the rect instead of the old fixed 190 px, so it scales with the
+   fog rather than moving faster on small covers. */
+.battle-fog-cloud-clip::before {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  background-color: var(--battle-fog-base);
+  background-image:
+    radial-gradient(closest-side circle at 32% 28%, #fafafa 0%, #e4e4e7 44%, #000000 100%),
+    radial-gradient(closest-side circle at 74% 70%, #f4f4f5 0%, #d4d4d8 48%, #000000 100%),
+    radial-gradient(closest-side circle at 52% 88%, #3f3f46 0%, #71717a 46%, #ffffff 100%);
+  background-size: 49.3% 52%, 58.7% 46.7%, 88% 64%;
+  background-repeat: repeat;
+  background-blend-mode: lighten, lighten, darken;
+  will-change: transform;
+  animation: battle-fog-drift 52s linear infinite;
+}
+
+@keyframes battle-fog-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-13%, 9%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Static cloud, never "no fog": the drift stops and nothing else. */
+  .battle-fog-cloud-clip::before {
+    animation: none;
+  }
+  /* The 3D dice stage's fade and the progress dock's sweep are motion too. */
+  .dice-stage {
+    transition: none;
+  }
+  .progress-indeterminate {
+    animation: none;
+  }
+}

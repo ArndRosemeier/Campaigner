@@ -1,0 +1,30 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/equipment24/weapons/martial-melee/longsword.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Longsword
+system:
+  description:
+    value: ""
+    chat: ""
+  price:
+    value: 15
+    denomination: gp
+  rarity: ""
+  source:
+    custom: ""
+    rules: "2024"
+    license: CC-BY-4.0
+    book: ""
+  properties:
+    - ver
+  type:
+    value: martialM
+    baseItem: longsword
+  quantity: 1
+  weight:
+    value: 3
+    units: lb
+_id: phbwepLongsword0
+type: weapon
+ownership:
+  default: 0

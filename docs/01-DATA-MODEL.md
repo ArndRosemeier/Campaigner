@@ -1,0 +1,671 @@
+# 01 — Data Model
+
+All types live in `/src/domain`. Each type has a zod schema (same file,
+`<Name>Schema`) and the TS type is derived via `z.infer`. Dexie tables live in
+`/src/db/db.ts`.
+
+## Conventions
+
+```ts
+type Id = string;               // crypto.randomUUID()
+interface BaseEntity {
+  id: Id;
+  createdAt: number;            // Date.now()
+  updatedAt: number;
+}
+```
+
+## Entities
+
+### Campaign
+```ts
+interface Campaign extends BaseEntity {
+  name: string;
+  description: string;          // markdown
+  system: GameSystem;           // see below
+  coverImageId: Id | null;      // picker card art (cover-generation arc, additive default null)
+}
+type GameSystem = 'dnd5e' | 'pathfinder2e' | 'cosmere' | 'generic-d20' | 'other';
+```
+
+### Artifact (the central content unit)
+
+One table, discriminated by `kind`. Current kinds are `pc | npc | location |
+event | faction | note | encounter | plotarc`; the retired `session` kind is removed in
+v11. Ownership scope is **derived**, never stored separately:
+
+- `campaignId === null && moduleId === null` → Global library,
+- `campaignId !== null && moduleId === null` → Campaign,
+- `campaignId !== null && moduleId !== null` → Module.
+
+Only `npc | location | event | faction | encounter` may be global. A global PC is
+invalid because its persistent HP belongs to one campaign.
+
+```ts
+interface ArtifactBase extends BaseEntity {
+  campaignId: Id | null;
+  moduleId: Id | null;
+  kind: ArtifactKind;
+  name: string;
+  tags: string[];
+  aliases: string[];
+  summary: string;
+  body: string;                 // markdown
+  links: ArtifactLink[];
+  currentRevision: number;
+  imageIds: Id[];
+  coverImageId: Id | null;
+  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote this text
+}
+type ArtifactKind = 'pc' | 'npc' | 'location' | 'event' | 'faction' |
+  'note' | 'encounter' | 'plotarc';
+type ArtifactScope = 'global' | 'campaign' | 'module';
+
+interface ArtifactLink {
+  targetId: Id;
+  relation: string;
+}
+```
+
+**`writerModel` — which model wrote this text (owner request, docs/17 row
+93).** Additive `.default('')`, parse-on-read, **no Dexie version bump** (the
+`coverImageId` / `promptStyle` precedent). The value is the model the SERVER
+reported serving the call that produced the text (`chat()`'s `modelUsed`),
+recorded at the write seam — never a settings lookup, which would name the
+model we ASKED for and mislabel the text after any fallback escalation
+(docs/18 §4). The three owner decisions that define it:
+
+- **`''` means NOT RECORDED, and that displays as NOTHING.** Text written
+  before the field existed keeps an empty id forever; nothing is ever
+  backfilled or guessed from the settings of the day.
+- **A hand edit KEEPS the id** (`ArtifactPatch.writerModel` is optional and an
+  omitted key means "carry" — only the writers that actually author text set
+  it), so the id keeps answering "which model wrote this" after the owner
+  edits a passage.
+- **App only**: never in an exported PDF or an LLM-facing contract
+  (docs/18 §2.2/§4).
+
+Provenance is a TOP-LEVEL field and must never appear inside `data` — every
+exporter renders `data`, so putting it there would ship it.
+
+Kind-specific structured data goes in a `data` field:
+
+```ts
+interface NpcArtifact extends ArtifactBase {
+  kind: 'npc';
+  data: {
+    appearance: string;
+    personality: string;
+    statBlock: StatBlock | null;
+  };
+}
+interface LocationArtifact extends ArtifactBase {
+  kind: 'location';
+  data: {
+    locationType: string;       // 'city' | 'dungeon' | 'region' | free text
+    inhabitants: string;
+    pointsOfInterest: { name: string; description: string }[];
+    hooks: string[];            // adventure hooks anchored here
+  };
+}
+// `event` is CODE-IDENTICAL to `location` (social/non-combat content: GM text
+// + showable image) — same `data` shape, own `kind`, no event-specific fields.
+interface EventArtifact extends ArtifactBase {
+  kind: 'event';
+  data: LocationArtifact['data'];
+}
+interface FactionArtifact extends ArtifactBase {
+  kind: 'faction';
+  data: {
+    goals: string;
+    methods: string;
+    resources: string;
+    ranks: { title: string; description: string }[];
+  };
+}
+interface NoteArtifact extends ArtifactBase {
+  kind: 'note';
+  data: Record<string, never>;  // body/tags only
+}
+// The runtime zod discriminated union also includes PC, Encounter and PlotArc.
+type Artifact = PcArtifact | NpcArtifact | LocationArtifact | EventArtifact |
+  FactionArtifact | NoteArtifact | EncounterArtifact | PlotArcArtifact;
+type GlobalArtifact = Extract<Artifact, { kind: 'npc' | 'location' | 'event' | 'faction' | 'encounter' }> & {
+  campaignId: null;
+  moduleId: null;
+};
+type AnyArtifact = Artifact | GlobalArtifact;
+```
+
+### StatBlock (normalized d20)
+
+One shared shape for all d20 systems; system-specific bits go into `extras`.
+
+```ts
+interface StatBlock {
+  system: GameSystem;
+  level: string;                // CR, level, or tier as printed, e.g. "CR 5", "Level 3"
+  size: string;                 // 'Medium', etc.
+  creatureType: string;         // 'humanoid (goblin)', class names for NPCs
+  ac: number;
+  acNote: string;               // 'natural armor', shield info…
+  hp: number;
+  hpFormula: string;            // '8d8 + 16', '' if unknown
+  speed: string;                // '30 ft., fly 60 ft.'
+  abilities: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+  saves: string;                // as printed, e.g. 'Dex +5, Wis +3'
+  skills: string;
+  senses: string;
+  languages: string;
+  traits: NamedText[];          // passive features
+  actions: NamedText[];
+  reactions: NamedText[];
+  legendary: NamedText[];
+  extras: Record<string, string>; // system-specific fields, key = label as printed
+}
+interface NamedText { name: string; text: string }
+```
+
+### Monster sources (M3-B)
+
+Every `encounter` monster entry carries a `source` discriminated union that
+says where its stats come from. Resolution is repo-backed
+(`resolveMonsterEntryWithRepos`) over the pure dispatcher in
+`/src/domain/encounterResolve.ts`; dangling references resolve to
+`{ statBlock: null, origin: 'missing ref' }` so the UI renders a warning
+badge instead of crashing.
+
+```ts
+type MonsterSource =
+  | { type: 'npc-ref'; artifactId: Id }    // stats live on the linked NPC artifact
+  | { type: 'inline'; statBlock: StatBlock } // one-off, embedded
+  | { type: 'rulebook'; chunkId: Id }      // ingested statblock chunk (RuleChunk)
+  | { type: 'none' };                      // name-only entry (pre-M3-B rows migrate here)
+interface MonsterEntry { name: string; count: number; notes: string; source: MonsterSource }
+```
+
+Dexie upgrade `version(3)` fills `source: { type: 'none' }` on pre-M3-B
+encounter rows. Encounter personas cite ingested stat-block excerpts via
+`sourceChunkIndex`, which finalize maps back to `{ type: 'rulebook', chunkId }`.
+
+### Encounter layouts (v12)
+
+`EncounterArtifactData` adds `layout: EncounterLayout | null`; uploaded maps
+remain null. Generated geometry is authoritative JSON: 12–40-cell grids,
+1–3 rectangle room unions, one interior `mobsRect` per room, one spawn room,
+and one-cell corridor rectangle paths. `monsterIndexes` point into the
+encounter roster. Validation rejects overlaps, invalid bounds, disconnected
+rooms/corridors, missing roster assignments and insufficient mob capacity.
+
+```ts
+interface EncounterLayout {
+  gridW: number;
+  gridH: number;
+  theme: string;
+  rooms: {
+    id: Id; name: string; rects: LayoutRect[]; mobsRect: LayoutRect;
+    description: string; monsterIndexes: number[]; spawn: boolean;
+  }[];
+  corridors: { a: Id; b: Id; rects: LayoutRect[] }[];
+}
+```
+
+Battle boards add `mapLayout: { cols: number; rows: number } | null`. Generated
+battles stamp it from the encounter; table snapping, grid tracks, token sizing
+and veil dimensions derive from normalized layout cells rather than viewport
+pixels. Room placements are recomputed from roster counts when seeding.
+
+### Encounter presets (v15)
+
+`EncounterArtifactData` adds `preset: 'standard' | 'dungeon'` (default
+`'standard'`): the Dungeon preset (doc 11 D10) generates the layout on the
+fixed ×2 grid tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40) and biases
+the brief toward a connected multi-room complex. The choice persists in
+three places so regenerations and resumes reproduce the tier — the artifact
+data (user-facing label + regeneration memory), `PersonaRun.encounterPreset`
+(`'standard' | 'dungeon' | null`, null = not an encounter run; the same
+pause/resume role as `encounterMapAspect`), and `Settings.encounterPreset`
+(default `'standard'`; also the unattended module queue's only source).
+Deriving the preset from layout dimensions would be ambiguous, so it is
+persisted, never inferred. No battle-level field exists: the board is a
+pure function of the layout, and the finer grid rides `cols/rows`.
+
+### Encounter fill grade (fill-grade arc, doc 11 D12 amendment)
+
+`EncounterArtifactData` adds `fillGrade?: number` — additive optional
+integer 0–100, no Dexie bump (legacy rows parse with the field absent =
+undrawn). It records the share of a standard single-encounter threat budget
+each room of a COMPLEX should carry: the deterministic input behind
+`expectedRoomThreat`'s per-room expectation (`src/llm/roomBudget.ts`), the
+brief prompt's stocking numbers, the Cartographer's bounded roster-expansion
+cap, and the in-place fill's nearest-band packing. Draw-once by
+`drawFillGrade` (documented weighted distribution, `src/domain/artifact.ts`)
+when a complex layout first materializes with the field absent — fresh
+Cartographer birth, a legacy row's first map regeneration, or an in-place
+fill of a legacy complex; a value on the row (owner-set or a previous draw)
+is never redrawn. Inert on single sites; pf2e computes no numbers from it
+(Paizo licensing).
+
+### ArtifactRevision
+
+Full snapshot per revision (simple, storage is cheap for text).
+
+```ts
+interface ArtifactRevision extends BaseEntity {
+  artifactId: Id;
+  revision: number;             // 1-based
+  snapshot: Artifact;           // deep copy at save time
+  source: 'user' | 'persona';   // who produced this revision
+  runId: Id | null;             // PersonaRun that produced it, if source==='persona'
+}
+```
+Saving an artifact: increment `currentRevision`, write the revision row, then
+update the artifact row. Keep at most 50 revisions per artifact (delete oldest).
+
+### Rulebook & RuleChunk
+
+```ts
+interface PackMeta {
+  sourceId: string;             // adapter id, e.g. 'foundry-pf2e'
+  license: string;              // stored verbatim from the adapter, shown in the UI
+  entriesImported: number;      // int ≥ 0
+  entriesSkipped: number;       // non-creature docs, by design
+  entriesFailed: number;        // failed statBlock validation
+}
+
+interface Rulebook extends BaseEntity {
+  title: string;                // user-editable, default = PDF filename
+  system: GameSystem;
+  filename: string;
+  pageCount: number;
+  status: 'processing' | 'ready' | 'error';
+  errorMessage: string;
+  origin: 'pdf' | 'pack';       // default 'pdf' — legacy rows need no migration
+  packMeta: PackMeta | null;    // default null; import report of a pack book (doc 12 §4)
+  // Original PDF bytes ARE retained at ingest (source-viewers arc, 2026-09-05
+  // owner ratification) — in the separate `pdfFiles` table below, never here.
+}
+
+interface RuleChunk extends BaseEntity {
+  bookId: Id;
+  pageStart: number;            // 1-based
+  pageEnd: number;
+  chunkType: 'section' | 'statblock' | 'table';
+  headingPath: string[];        // e.g. ['Chapter 9: Combat', 'Grappling']
+  text: string;                 // cleaned plain text of the chunk
+  statBlock: StatBlock | null;  // parsed, when chunkType === 'statblock'
+  contentHash: string;          // SHA-256 hex of `text`, for embedding cache
+}
+```
+
+### ChunkEmbedding
+
+```ts
+interface ChunkEmbedding {
+  contentHash: string;          // primary key; matches RuleChunk.contentHash
+  model: string;                // embedding model id used
+  vector: number[];             // stored as plain array; Float32Array in memory
+}
+```
+
+### Persona & PersonaRun — see `04-LLM-PERSONAS.md` for full semantics
+
+```ts
+interface Persona extends BaseEntity {
+  slug: string;                 // 'npc-smith' — unique, used in code
+  name: string;                 // 'NPC Smith'
+  description: string;
+  systemPrompt: string;
+  model: string;                // OpenRouter model id, e.g. 'anthropic/claude-sonnet-4.5'
+  reasoningEffort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'; // default 'default'
+  temperature: number;          // default 0.8
+  producesKind?: ArtifactKind;  // artifact kind this persona outputs;
+                                // omitted for image personas (mode 'image', M3-A)
+  mode: 'generate' | 'review' | 'image' | 'encounter';  // default 'generate';
+                                // 'encounter' = Cartographer (docs/11, b0f6fc8)
+  builtIn: boolean;             // built-ins are re-seeded on app start if missing
+}
+
+type Autonomy = 'manual' | 'review' | 'auto';
+type RunStatus = 'running' | 'awaiting_user' | 'needs_review'
+               | 'completed' | 'cancelled' | 'failed';
+
+interface PersonaRun extends BaseEntity {
+  campaignId: Id;
+  personaId: Id;
+  autonomy: Autonomy;
+  status: RunStatus;
+  userBrief: string;            // the user's task description
+  pinnedChunkIds: Id[];         // user-pinned rule chunks
+  steps: RunStep[];             // embedded array (runs are small)
+  resultArtifactId: Id | null;
+  targetArtifactId: Id | null;  // review (M2) / image (M3-A) personas: the artifact under review/decoration
+  errorMessage: string;
+}
+interface RunStep {
+  index: number;
+  name: string;                 // 'retrieve' | 'draft' | 'statblock' | 'finalize' (generate personas)
+                                // 'gather' | 'check' | 'finalize' (review personas, M2)
+                                // 'prompt-draft' | 'generate' | 'pick' (image personas, M3-A)
+  status: 'pending' | 'running' | 'done' | 'approved' | 'rejected';
+  input: unknown;               // JSON-serializable
+  output: unknown;              // JSON-serializable
+  userEdit: unknown | null;     // user's edited version of output, if any
+}
+```
+
+**Legacy `producesKind` normalization** (`normalizeLegacyProducesKind`, one
+preprocess step inside `personaSchema`): persona rows predate their enum —
+personas are global, `seedBuiltInPersonas` skips existing slugs, and writes
+never rewrite old rows — so a value the ARTIFACT_KINDS union once held must
+parse forever. The git-proven removed-value map (complete historic
+enumeration, docs/17 row 34):
+
+| stored (legacy) | parses as | provenance |
+|-----------------|-----------|------------|
+| `'session'` | `'note'` | kind existed M2 `cd8e751` → removed M6-E `a670751`; only ever carried by the built-in `session-chronicler` (added `b18e33a`), removed with the kind. The v11 migration deleted session artifacts but no persona rows; `'note'` is the current kind for persona-authored plans/reports (review personas, Plot Architect). |
+
+Anything outside the current enum ∪ this table — including `null`, which no
+write path ever produced — still fails loudly at the boundary (AGENTS rule
+1). When a future arc removes an artifact kind again, the removed value is
+added HERE with its provenance.
+
+### There is NO deliverable entity (REMOVED — docs/17 row 108, Dexie v21)
+
+The `deliverables` table (`'id, campaignId'`, Dexie v5 → **dropped in v21**),
+`Deliverable` and its `OutlineNode` model are GONE. The module PDF is DERIVED
+from the module row and its artifacts, so there is no second stored document to
+keep in sync; the outline, the page and the route are deleted with it. Old data
+is not migrated (no compatibility requirement) but never disappears silently:
+Dexie v21 records the dropped row count in `settings.deliverablesRemoved` (the
+shell toasts it once) and an old export file reports
+`Skipped N rows from the retired "deliverables" table …` on import.
+
+Rendering conventions live in 07-MILESTONE-3.md §M3-D (read-aloud blockquote
+boxes, difficulty kickers, labeled per-kind sections, two-column stat boxes,
+map plates at their anchor, NPC gallery + treasure ledger appendices, "missing
+artifact" placeholders for dangling references). Renderer:
+`/src/lib/modulePdf.ts` + `/src/lib/pdfImages.ts` + `/src/lib/mdToPdfmake.ts`.
+
+### Battle (M5, re-anchored in M6-E)
+
+A battle is ephemeral table state owned by one module, not authored content.
+`campaignId` remains the campaign anchor; `moduleId` is unique in practice via
+`ensureBattle(campaignId, moduleId)`. NPC HP lives on tokens, while PC HP stays
+on the campaign PC artifact. `seedFighters` freezes stats only for inline or
+rulebook monsters that have no artifact row.
+
+```ts
+interface Battle extends BaseEntity {
+  campaignId: Id;
+  moduleId: Id;
+  encounterArtifactId: Id | null;
+  board: BattleBoard;
+  seedFighters: SeedFighter[];
+}
+```
+
+### StoredImage (M3-A)
+
+Binary payloads live in their own table; artifacts reference them by id
+(`imageIds`/`coverImageId`). Payloads are stored as `Uint8Array` bytes
+(structured clone-safe), never Blobs; consumers rebuild a Blob at the
+boundary. A blob is deleted only when no artifact AND no revision snapshot
+references it anymore (reference-counted deletion in `imageRepo`).
+
+`mapImageId` ownership (single-map-slot, docs/11 D16): an encounter's
+battlemap is OWNED by the encounter row — the gallery holds exactly one map
+(`imageIds` replace, not accumulate) while `data.mapImageId` names the live
+one. The refcount sees all three map roles, so a blob survives while any of
+them names it: the live `data.mapImageId` on encounter rows, the replaced
+`snapshot.data.mapImageId` in revision history (restored history still
+renders), and the frozen `board.mapImageId` on battle rows (campaign-scoped
+battle scan; the global variant scans every campaign). The live battlemap
+is undeletable through `removeImageFromArtifact` — Regenerate is the only
+way to swap it.
+
+Cover-slot ownership (cover-generation arc): a module's and a campaign's
+`coverImageId` (cover-only; no gallery `imageIds` on either row) name image
+rows anchored to the owner campaign — a module cover anchors to its
+`campaignId`, a campaign cover anchors to its own id — so `deleteCampaign`'s
+image sweep frees them with everything else, and `deleteModule` frees the
+module cover after the row delete (captured before, `deleteImageIfUnreferenced`
+after — the refcheck's cache-table read cannot join the delete scope). The
+reference scans (`referencedImageIds` + the global variant) pin both slots,
+so routine artifact prunes never GC cover blobs; export pins them as
+`module:<id>:cover` / `campaign:<id>:cover` refs (JSON carries the binaries,
+the import re-id path keeps image ids so the slots stay valid); and the
+module PDF cover page renders the module's own `coverImageId`, and NO cover
+image when it has none (a derived document borrows nothing). Regen is
+delete-after-replace (fresh cover commits first, ONLY the superseded id is
+freed) — the preservation rule.
+
+```ts
+interface StoredImage extends BaseEntity {
+  campaignId: Id | null;        // null when owned by a global artifact
+  bytes: Uint8Array;            // re-encoded at intake: EXIF-safe decode, ≤1600px long edge
+  mimeType: string;             // actually encoded format ('image/webp' target, PNG fallback)
+  width: number;
+  height: number;
+  prompt: string;               // generation prompt; '' for uploads
+  model: string;                // image model id; '' for uploads
+  source: 'generated' | 'uploaded';
+}
+```
+
+**`model` is the image half of the provenance request (docs/17 row 93).** The
+field already existed (07-MILESTONE-3 M3-A recorded which image model generated
+a blob); what the arc added is a DISPLAY surface — the same small muted caption
+as text provenance, under the image, via `useImageModel` +
+`components/writer-model-id.WriterModelId`. Same rule as the text half: `''`
+(uploads, and any generate row written before the field) means NOT RECORDED and
+renders NOTHING — never a placeholder, never the currently configured image
+model. App only, exactly like the text ids (docs/18 §4).
+
+### StoredPdf (source-viewers arc, 2026-09-05)
+
+The ORIGINAL bytes of a PDF-origin book, retained at ingest so the in-app
+viewer renders them — delete + reimport never needs the original file. One
+row per book (`&bookId` unique); written once by `ingestPdf` on success (a
+failed ingest retains nothing); deleted with the book (`deleteRulebook`
+cascade). **Backups exclude the bytes ALWAYS (owner-ratified)** — the PDF is
+a convenience copy of a file the user owns on disk; chunks/embeddings carry
+the functional data. Books ingested before retention have no row — the
+viewer shows that loudly and there is NO attach/re-attach affordance
+(owner-ratified cut): retention happens at ingest or not at all.
+
+```ts
+interface StoredPdf extends BaseEntity {
+  bookId: Id;                   // unique — one retained PDF per book
+  bytes: Uint8Array;            // the original file, exactly as ingested
+  filename: string;             // ingested file name (the title is editable)
+  mimeType: string;             // 'application/pdf'
+  sizeBytes: number;            // bytes.byteLength; the backup note reads this
+}
+```
+
+Ingest cap: `PDF_MAX_BYTES = 250 MB` per file — rejected loudly before any
+row exists (the codebase's first byte cap; image caps are pixel caps).
+
+### Settings (single row, id = 'settings')
+
+```ts
+interface Settings {
+  id: 'settings';
+  openRouterApiKey: string;     // '' when unset
+  defaultChatModel: string;     // default 'anthropic/claude-sonnet-4.5'
+  fallbackChatModel: string;    // '' = no fallback; escalation tier for congestion/filter + contract repair
+  defaultReasoningEffort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'; // default 'default'
+  embeddingModel: string;       // default 'openai/text-embedding-3-small'
+  embeddingsEnabled: boolean;   // default false until API key present
+  imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
+  fallbackImageModel: string;   // '' = no fallback; escalation tier for image transport failures
+  // NO imagesEnabled: the global image on/off switch was DELETED at docs/17 row 406
+  // (owner: "if the user does not want images he just does not need to query it").
+  language: 'en'|'de'|'fr'|'es'|'it'|'pt'|'nl'|'pl'|'ru'|'ja'|'zh';
+  artifactScopes: {
+    workspace: { global: boolean; campaign: boolean; module: boolean };
+    moduleView: { global: boolean; campaign: boolean; module: boolean };
+  };
+  encounterMapAspect: '4:3' | '16:9' | '1:1';
+  encounterVerifyModel: string; // '' = use defaultChatModel; verify needs vision (M6)
+  maxParallelRequests: number;  // 1–4, default 2 — bound for independent parallel LLM work
+  retiredSessionNotesRemoved: number; // v11 startup notice, consumed to 0
+}
+```
+
+## Dexie schema (`/src/db/db.ts`)
+
+```ts
+import Dexie, { type Table } from 'dexie';
+
+export class CampaignerDB extends Dexie {
+  campaigns!: Table<Campaign, Id>;
+  artifacts!: Table<AnyArtifact, Id>;
+  revisions!: Table<ArtifactRevision, Id>;
+  images!: Table<StoredImage, Id>;      // M3-A
+  rulebooks!: Table<Rulebook, Id>;
+  chunks!: Table<RuleChunk, Id>;
+  embeddings!: Table<ChunkEmbedding, string>;
+  personas!: Table<Persona, Id>;
+  runs!: Table<PersonaRun, Id>;
+  modules!: Table<Module, Id>;
+  battles!: Table<Battle, Id>;
+  pdfFiles!: Table<StoredPdf, Id>;      // source-viewers: retained PDF bytes
+  settings!: Table<Settings, string>;
+
+  constructor() {
+    super('campaigner');
+    this.version(1).stores({
+      campaigns:  'id, name',
+      artifacts:  'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions:  'id, artifactId, [artifactId+revision]',
+      rulebooks:  'id, system, status',
+      chunks:     'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas:   'id, &slug',
+      runs:       'id, campaignId, personaId, status, updatedAt',
+      settings:   'id',
+    });
+    // M3-A: new images table; artifacts gain imageIds/coverImageId; runs gain
+    // targetArtifactId. The upgrade fills defaults on existing rows —
+    // existing version blocks are never mutated.
+    this.version(2)
+      .stores({
+        campaigns:  'id, name',
+        artifacts:  'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions:  'id, artifactId, [artifactId+revision]',
+        images:     'id, campaignId',
+        rulebooks:  'id, system, status',
+        chunks:     'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas:   'id, &slug',
+        runs:       'id, campaignId, personaId, status, updatedAt',
+        settings:   'id',
+      })
+      .upgrade(async (tx) => { /* imageIds [], coverImageId null, targetArtifactId null */ });
+
+    // M5-B (09-MILESTONE-5): new battles table — one live battle per session
+    // (id, campaignId, sessionId). Version 9's upgrade backfills the M5-C
+    // fields the schema now expects: encounter artifacts gain
+    // `mapImageId: null` and images gain `role: 'artwork'` (map-role images
+    // take a 4096px intake cap and are the only battlemap pickers offer).
+    this.version(9).stores({
+      campaigns:  'id, name',
+      artifacts:  'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions:  'id, artifactId, [artifactId+revision]',
+      images:     'id, campaignId',
+      rulebooks:  'id, system, status',
+      chunks:     'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas:   'id, &slug',
+      runs:       'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules:    'id, campaignId, updatedAt',
+      battles:    'id, campaignId, sessionId', // frozen historical v9 shape
+      settings:   'id',
+    });
+
+    // M6-A: ownership indexes and moduleId:null backfill.
+    this.version(10).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, sessionId',
+      // all other stores unchanged
+    });
+
+    // M6-E: module reader is the play view. Upgrade clears live battles,
+    // deletes retired session artifacts/revisions, scrubs their links and
+    // records the count for a one-time startup toast.
+    this.version(11).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
+      // all other stores unchanged
+    });
+
+    // Encounter generator: indexes are unchanged. The upgrade only backfills
+    // encounter.data.layout and battle.board.mapLayout to null.
+    this.version(12).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
+      // all other stores unchanged
+    });
+
+    // Opt-in cross-module continuity: modules gain includePriorModules:false.
+    this.version(13).stores({
+      modules:   'id, campaignId, updatedAt',
+      // all other stores unchanged
+    });
+
+    // Source-viewers: retain the ORIGINAL PDF bytes at ingest (one row per
+    // book via the unique `&bookId`). Empty start — no upgrade; pre-retention
+    // books have no row (viewer loud absent state).
+    this.version(14).stores({
+      pdfFiles:  'id, &bookId',
+      // all other stores unchanged
+    });
+
+    // Dungeon preset (11-ENCOUNTER-GENERATOR D10): indexes are unchanged.
+    // The upgrade backfills the additive defaults — encounter.data.preset
+    // 'standard', runs.encounterPreset null, settings.encounterPreset
+    // 'standard' (the M5-C mapImageId pattern).
+    this.version(15).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
+      // all other stores unchanged
+    });
+  }
+}
+export const db = new CampaignerDB();
+```
+
+No version bump for cover slots (cover-generation arc): `coverImageId` on
+modules and campaigns is additive `z.uuid().nullable().default(null)` with
+parse-on-read defaults (the v7/v13/v15/v17 precedent) — no index changes, no
+upgrade function. Campaigns additionally parse on read (`getCampaign` /
+`listCampaigns`) so pre-cover rows surface `null`, never `undefined`.
+
+**Current head is v21** (the creature tier v20, then the deliverables drop v21):
+v21 is the ONLY version block that REMOVES a store — its `.stores({…
+deliverables: null …})` deletes the table and its upgrade body counts the rows
+it dropped into `settings.deliverablesRemoved` (the loud form; docs/17 row 108).
+The `deliverables` line in the v9 listing above is therefore accurate HISTORY,
+not the current schema.
+
+No version bump for the whole-module canvas (canvas arc): the module row
+gains `canvas` — `{ nodes: { key, x, y }[], zoom, pan: { x, y } } | null`,
+additive `.default(null)` with parse-on-read (same precedent). The STORED node
+keys are STABLE and FROZEN (docs/17 row 388): `'premise'`,
+`'part-<planIndex>'` (level − 1) and `'prior-<moduleId>'` — the BOARD addresses
+LEVELS (`'level-<N>'`, the premise at 0) and `domain/moduleDocument`'s
+`storedCanvasNodeKeyForLevel`/`levelForStoredCanvasNodeKey` map the two at the
+board's read/write boundary, so rows written before the level keying keep
+reading and re-writing byte-identically. The layout rides `patchModule`
+(backup/export follow); there is no localStorage copy and no new table.
+
+## Repository layer
+
+For each table create a module in `/src/db` (e.g. `artifactRepo.ts`) exposing
+typed CRUD functions. Components use these repos via hooks built on
+`dexie-react-hooks` (`useLiveQuery`) so the UI reacts to DB changes
+automatically. **Rule:** components never call `db.*` directly — always through
+a repo function or a `useLiveQuery` hook defined in the feature's `hooks.ts`.

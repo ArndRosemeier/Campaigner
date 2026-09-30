@@ -1,0 +1,820 @@
+import { getSettings } from '@/db/settingsRepo';
+import { getCachedModels, modelsResponseSchema, setCachedModels, type CachedModel } from '@/llm/modelCache';
+import { applyLanguageDirective } from '@/llm/language';
+import { debugLog } from '@/lib/debug';
+import { activeElapsedMs } from '@/lib/pageLiveness';
+import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
+import { MissingApiKeyError, OpenRouterError, errorTypeFromBody } from '@/llm/openrouterErrors';
+import type { FallbackReason } from '@/llm/openrouterErrors';
+import type { ReasoningEffort } from '@/domain/settings';
+import type { Settings } from '@/domain';
+import type { SchemaResponseFormat } from '@/llm/strictSchema';
+
+// Error types live in the leaf module /src/llm/openrouterErrors.ts (shared
+// with the model-fallback helpers); re-exported for API compatibility.
+export { MissingApiKeyError, OpenRouterError };
+export type { OpenRouterErrorKind, FallbackReason } from '@/llm/openrouterErrors';
+
+/**
+ * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
+ * with SSE parsing, typed errors and 429/5xx retries (2s/8s backoff).
+ */
+
+/** The OpenRouter API root (chat, images and /models endpoints). */
+export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | ChatContentPart[];
+}
+
+/** What a streamed call is doing right now (see ChatOptions.onActivity). */
+export interface ChatStreamActivity {
+  /** Milliseconds since the stream started. */
+  elapsedMs: number;
+  /** Content characters received so far (reasoning deltas excluded). */
+  receivedChars: number;
+  /** waiting = no bytes yet; thinking = reasoning deltas arriving; content =
+   * answer deltas arriving. Reasoning deltas are deliberately NOT onToken —
+   * this probe is the only way a caller can show life during a long think. */
+  phase: 'waiting' | 'thinking' | 'content';
+}
+
+export interface ChatOptions {
+  model: string;
+  temperature: number;
+  /**
+   * JSON reply modes:
+   * - `'json'` — best-effort: `response_format: { type: 'json_object' }`
+   *   (valid JSON, NO schema adherence).
+   * - `{ kind: 'schema', name, jsonSchema }` (build with
+   *   `schemaResponseFormat()` in /src/llm/strictSchema.ts) — strict
+   *   structured outputs: `response_format: { type: 'json_schema',
+   *   json_schema: { name, strict: true, schema } }`. OpenRouter enforces
+   *   the schema token-level for supporting models, so a shape failure
+   *   cannot occur. The Settings `strictOutputs` toggle (default ON) is the
+   *   ONLY way this downgrades to `'json'` behavior — never automatic.
+   */
+  responseFormat?: 'json' | SchemaResponseFormat | undefined;
+  signal?: AbortSignal | undefined;
+  /** Reasoning effort for reasoning-capable models ('none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'). */
+  reasoningEffort?: ReasoningEffort | undefined;
+  /** Streaming callback, invoked once per content delta. */
+  onToken?: ((delta: string) => void) | undefined;
+  /**
+   * Streaming callback for reasoning deltas ("the model is thinking"), when
+   * the model returns them at all. Illustration only — the deltas never
+   * become part of the returned answer and are not persisted anywhere.
+   */
+  onReasoning?: ((delta: string) => void) | undefined;
+  /** Liveness probe, emitted by the 1s watchdog while the stream is open.
+   * Lets a caller keep a progress surface alive during long quiet stretches
+   * (queued providers, reasoning models thinking before the first delta). */
+  onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
+  /**
+   * Model-fallback feature: called when the previous chain entry failed —
+   * which escalates unconditionally (owner: "ANY ERROR, ANY AT ALL should
+   * lead to the fallback") — and the next model is about to be tried. Never
+   * fires when no fallback model is configured.
+   */
+  onFallback?: ((info: ChatFallback) => void) | undefined;
+  /**
+   * Called before a fallback attempt after the previous attempt may already
+   * have streamed partial tokens: subscribers must clear their buffers so the
+   * restarted stream does not append to content from the failed attempt.
+   */
+  onReset?: (() => void) | undefined;
+}
+
+/**
+ * How an answer came to be via the escalation chain: from/to models and the
+ * classified reason. Callers surface this (run notices, progress dock);
+ * it must never be swallowed (AGENTS rule 1).
+ */
+export interface ChatFallback {
+  from: string;
+  to: string;
+  reason: FallbackReason;
+}
+
+/** What one chat() call produced — including WHICH model produced it. */
+export interface ChatResult {
+  text: string;
+  modelUsed: string;
+  /** Null when the first-try model answered without escalation. */
+  fallback: ChatFallback | null;
+}
+
+/** Spec backoff schedule for 429/5xx retries (04 spec: 2s, 8s). */
+export const DEFAULT_RETRY_BACKOFFS_MS = [2000, 8000] as const;
+
+/**
+ * Abort a stream that receives no bytes at all for this long (keep-alive
+ * comments count as activity). Without it a hung SSE connection leaves a run
+ * stuck in "streaming" forever; with it the run fails visibly and can be
+ * retried.
+ */
+const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
+
+/**
+ * Abort a stream that produces no CONTENT for this long even while bytes
+ * (OpenRouter `: OPENROUTER PROCESSING` keep-alives, reasoning deltas) keep
+ * arriving. The byte-level stall timeout above cannot catch a provider that
+ * accepts the request and then streams keep-alives forever — that was the
+ * "drafting…" forever hang. Reasoning deltas count as progress (the model is
+ * working); silent keep-alives do not.
+ */
+const DEFAULT_CONTENT_STALL_TIMEOUT_MS = 180_000;
+
+/**
+ * Hard deadline for one streamed chat call regardless of activity — a slow
+ * trickle (content every couple of minutes) would otherwise outlive any
+ * stall-based watchdog.
+ */
+const DEFAULT_STREAM_MAX_DURATION_MS = 600_000;
+
+/** Shared OpenRouter headers (chat, images, models endpoints). */
+export function openRouterHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    'HTTP-Referer': 'https://campaigner.local',
+    'X-Title': 'Campaigner',
+  };
+}
+
+/**
+ * One chat completion against one model: transport only. The escalation
+ * chain around it lives in chat().
+ */
+async function chatOnce(
+  model: string,
+  messages: ChatMessage[],
+  opts: ChatOptions,
+  settings: Settings,
+  retryBackoffs: readonly number[],
+  stallTimeoutMs: number,
+  contentStallMs: number,
+  maxDurationMs: number,
+): Promise<string> {
+  // Generation-language enforcement: the settings-selected language is
+  // injected into every chat completion (07 §Settings).
+  const effectiveMessages = applyLanguageDirective(messages, settings.language);
+
+  const body: Record<string, unknown> = {
+    model,
+    temperature: opts.temperature,
+    stream: true,
+    messages: effectiveMessages,
+  };
+  const schemaFormat =
+    typeof opts.responseFormat === 'object' ? opts.responseFormat : null;
+  if (opts.responseFormat === 'json') body.response_format = { type: 'json_object' };
+  if (schemaFormat !== null) {
+    // Strict structured outputs (owner decision). The settings toggle is the
+    // ONLY downgrade path: a user whose model genuinely cannot enforce
+    // schemas opts out explicitly — there is no automatic fallback anywhere.
+    body.response_format = settings.strictOutputs
+      ? {
+          type: 'json_schema',
+          json_schema: {
+            name: schemaFormat.name,
+            strict: true,
+            schema: schemaFormat.jsonSchema,
+          },
+        }
+      : { type: 'json_object' };
+  }
+  if (
+    opts.reasoningEffort !== undefined &&
+    opts.reasoningEffort !== 'default' &&
+    modelSupportsReasoning(model)
+  ) {
+    body.reasoning = { effort: opts.reasoningEffort };
+  }
+
+  const init: RequestInit & { signal?: AbortSignal | undefined } = {
+    method: 'POST',
+    headers: openRouterHeaders(settings.openRouterApiKey),
+    body: JSON.stringify(body),
+  };
+  if (opts.signal !== undefined) init.signal = opts.signal;
+  let response: Response;
+  try {
+    response = await fetchWithRetries(
+      `${OPENROUTER_BASE}/chat/completions`,
+      init,
+      retryBackoffs,
+    );
+  } catch (error) {
+    // A provider that rejects the strict response_format (HTTP 400/422)
+    // fails the step LOUDLY, naming the model — never an automatic downgrade
+    // to the weaker json_object mode (owner: loud > silent). The Settings
+    // toggle is the user's explicit escape hatch.
+    if (
+      schemaFormat !== null &&
+      settings.strictOutputs &&
+      error instanceof OpenRouterError &&
+      (error.status === 400 || error.status === 422)
+    ) {
+      throw new OpenRouterError(
+        'schema-rejected',
+        error.status,
+        `model "${model}" rejected the strict JSON-schema response format — ${error.bodyText}`,
+      );
+    }
+    throw error;
+  }
+  return readStream(response, opts.onToken, {
+    stallTimeoutMs,
+    contentStallMs,
+    maxDurationMs,
+  }, opts.onActivity, opts.onReasoning);
+}
+
+/**
+ * The combined end-of-chain error for chat calls (kind/status preserved in
+ * openrouterErrors.chainError) — see chat() below.
+ */
+
+/**
+ * True when any message carries image input (vision call): escalating such a
+ * call to a text-only fallback model would only buy a second, equally loud
+ * failure. Feeds walkModelChain's vision guard.
+ */
+function requestHasImageInput(messages: ChatMessage[]): boolean {
+  return messages.some(
+    (message) =>
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image_url'),
+  );
+}
+
+export async function chat(
+  messages: ChatMessage[],
+  opts: ChatOptions,
+  retryBackoffs: readonly number[] = DEFAULT_RETRY_BACKOFFS_MS,
+  stallTimeoutMs: number = DEFAULT_STREAM_STALL_TIMEOUT_MS,
+  contentStallMs: number = DEFAULT_CONTENT_STALL_TIMEOUT_MS,
+  maxDurationMs: number = DEFAULT_STREAM_MAX_DURATION_MS,
+): Promise<ChatResult> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+
+  // Model-fallback feature: primary first, then the configured escalation
+  // tier ('' or duplicate = disabled). Escalation is UNCONDITIONAL (owner
+  // decision 2026-09-07): every error advances to the next chain entry and
+  // only an exhausted chain fails, with the combined end-of-chain error;
+  // the sole stops are the model-independent failures (MissingApiKeyError
+  // — thrown above — and user aborts). The walk itself lives in
+  // walkModelChain (shared with the image client).
+  const chain = buildModelChain(opts.model, settings.fallbackChatModel);
+  const walk = await walkModelChain(
+    chain,
+    (model) =>
+      chatOnce(
+        model,
+        messages,
+        opts,
+        settings,
+        retryBackoffs,
+        stallTimeoutMs,
+        contentStallMs,
+        maxDurationMs,
+      ),
+    {
+      kind: 'chat',
+      needsImageInput: requestHasImageInput(messages),
+      onFallback: (info) => opts.onFallback?.(info),
+      onReset: () => opts.onReset?.(),
+    },
+  );
+  return { text: walk.value, modelUsed: walk.modelUsed, fallback: walk.fallback };
+}
+
+/** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
+export async function fetchWithRetries(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal | undefined },
+  backoffs: readonly number[],
+  headersTimeoutMs: number = DEFAULT_HEADERS_TIMEOUT_MS,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetchWithHeadersTimeout(url, init, headersTimeoutMs);
+    if (response.ok) return response;
+    const retryable = response.status === 429 || response.status >= 500;
+    const backoff = backoffs[attempt];
+    if (!retryable || backoff === undefined) {
+      throw await httpErrorOf(response, init.signal);
+    }
+    // Parallelization: several workers can hit the same provider limit at
+    // once — Retry-After (OpenRouter sends it when every attempted provider
+    // returned a retry hint) wins, otherwise jittered exponential backoff so
+    // the workers do not retry in lockstep (thundering herd).
+    const hint = response.status === 429 ? retryAfterMs(response) : null;
+    await sleep(hint ?? jitter(backoff), init.signal);
+  }
+}
+
+/** How long an error response may take to deliver its body (docs/17 row 413). */
+export const ERROR_BODY_TIMEOUT_MS = 15_000;
+
+/**
+ * The body of a NON-OK response, bounded: the headers timer is already
+ * cleared and the stream watchdog never runs for an error, so a provider that
+ * sends error headers and then stalls the body used to hang the call until
+ * someone aborted it. Past the bound the error is still thrown with its real
+ * status — the text says the body never arrived, it never pretends to be one.
+ * The caller's Stop ends the wait at once.
+ */
+export async function readErrorBody(
+  response: Response,
+  signal: AbortSignal | undefined,
+  timeoutMs: number = ERROR_BODY_TIMEOUT_MS,
+): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const bound = new Promise<string>((resolve, reject) => {
+    timer = setTimeout(() => {
+      resolve(
+        `(HTTP ${String(response.status)}: the error body did not arrive within ${String(Math.round(timeoutMs / 1000))}s)`,
+      );
+    }, timeoutMs);
+    onAbort = (): void => {
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([response.text(), bound]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * THE error for a non-OK OpenRouter response (docs/17 row 413): the bounded
+ * body read above plus the body's `metadata.error_type` as the code — the
+ * structural class the classifier reads FIRST, before status checks and prose
+ * patterns. Every non-OK read goes through here, so none can hang on a body.
+ */
+export async function httpErrorOf(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<OpenRouterError> {
+  const bodyText = await readErrorBody(response, signal);
+  return new OpenRouterError('http', response.status, bodyText, errorTypeFromBody(bodyText));
+}
+
+/** Upper bound for an honored Retry-After hint: a hostile/large hint must
+ * not stall a parallel worker for minutes — past the cap the normal error
+ * path takes over (retry budget exhausted → escalation chain). */
+const MAX_RETRY_AFTER_MS = 30_000;
+
+/** Retry-After header → milliseconds (seconds or HTTP-date form). */
+export function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get('Retry-After');
+  if (header === null) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  }
+  const dateMs = Date.parse(header);
+  if (!Number.isNaN(dateMs)) {
+    return Math.min(Math.max(dateMs - Date.now(), 0), MAX_RETRY_AFTER_MS);
+  }
+  return null;
+}
+
+/** ±25% jitter: keeps concurrent retriers from syncing their retries. */
+function jitter(ms: number): number {
+  return ms * 0.75 + Math.random() * ms * 0.5;
+}
+
+/**
+ * A fetch that never receives response HEADERS hangs forever (browsers impose
+ * no timeout, and the stream-stall watchdog only starts once headers exist) —
+ * the "Generating… forever" failure mode. The request is aborted loudly after
+ * `headersTimeoutMs`; the caller's abort signal keeps working for the body.
+ * Shared: chat/image retries AND the embeddings endpoint (a black-holed
+ * embedding request used to hang runEngine's retrieve/draft steps forever).
+ */
+export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
+
+export async function fetchWithHeadersTimeout(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal | undefined },
+  headersTimeoutMs: number = DEFAULT_HEADERS_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const onCallerAbort = (): void => {
+    controller.abort(init.signal?.reason);
+  };
+  if (init.signal !== undefined) {
+    if (init.signal.aborted) onCallerAbort();
+    else init.signal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    controller.abort(
+      new DOMException(
+        `OpenRouter request timed out: no response headers within ${String(Math.round(headersTimeoutMs / 1000))}s — check your connection and retry`,
+        'TimeoutError',
+      ),
+    );
+  }, headersTimeoutMs);
+  try {
+    // Headers only: once fetch resolves, the timer is cleared — body streaming
+    // is governed by the caller's signal and the stream-stall watchdog.
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    function onAbort(): void {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Incremental SSE event parser per the WHATWG spec: events are separated by
+ * blank lines, `data:` fields of one event concatenate with newlines, lines
+ * starting with `:` are comments (OpenRouter's `: OPENROUTER PROCESSING`
+ * keep-alives), and CR is stripped so CRLF streams work. Chunks may split
+ * lines and events anywhere; push() buffers until events are complete.
+ */
+export class SseEventParser {
+  private buffer = '';
+  private dataLines: string[] = [];
+
+  /** Feeds a decoded text chunk; returns the data payload of each complete event. */
+  push(chunk: string): string[] {
+    this.buffer += chunk;
+    const events: string[] = [];
+    for (;;) {
+      const newlineAt = this.buffer.indexOf('\n');
+      if (newlineAt === -1) break;
+      const line = this.buffer.slice(0, newlineAt).replace(/\r$/, '');
+      this.buffer = this.buffer.slice(newlineAt + 1);
+      if (line === '') {
+        // Event boundary: dispatch the collected data field, if any.
+        if (this.dataLines.length > 0) {
+          events.push(this.dataLines.join('\n'));
+          this.dataLines = [];
+        }
+        continue;
+      }
+      if (line.startsWith(':')) continue; // comment / keep-alive
+      if (line.startsWith('data:')) {
+        // Per spec, strip exactly one leading space after the field name.
+        const value = line.slice(5);
+        this.dataLines.push(value.startsWith(' ') ? value.slice(1) : value);
+      }
+      // Other fields (event:, id:, retry:) are irrelevant here.
+    }
+    return events;
+  }
+}
+
+/**
+ * Reads an OpenRouter streaming response and concatenates content deltas.
+ *
+ * End-of-stream is whichever arrives first (per OpenRouter's streaming docs):
+ * the `data: [DONE]` sentinel, a clean connection close, or the
+ * `choices[0].finish_reason` field — OpenRouter's docs note the terminal
+ * finish_reason appears on the last content chunk (and again on the usage
+ * chunk), and some providers never send [DONE] nor close the socket, so
+ * relying on either alone hangs the run.
+ *
+ * Failures that previously left runs in "streaming" forever are surfaced:
+ * mid-stream errors arrive as data events with a top-level `error` field and
+ * `finish_reason: "error"` (both throw), and a connection with no bytes at
+ * all for `stallTimeoutMs` is aborted by a watchdog.
+ *
+ * The watchdog measures LIVENESS, not wall-clock time (docs/17 row 110): the
+ * suspended intervals the page reports (lib/pageLiveness) are credited back,
+ * so a tab that was hidden/frozen/discarded mid-stream does not have a healthy
+ * stream cancelled on resume, and a stream that closed cleanly is returned as
+ * the complete answer it is. A dead stream still trips its limit after the
+ * resume — the fix is gap crediting, not a looser limit.
+ */
+async function readStream(
+  response: Response,
+  onToken: ((delta: string) => void) | undefined,
+  limits: {
+    stallTimeoutMs: number;
+    contentStallMs: number;
+    maxDurationMs: number;
+  },
+  onActivity: ((activity: ChatStreamActivity) => void) | undefined,
+  onReasoning: ((delta: string) => void) | undefined,
+): Promise<string> {
+  if (response.body === null)
+    throw new OpenRouterError('http', response.status, 'empty response body');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parser = new SseEventParser();
+  let full = '';
+  let reasoned = false;
+  let lastActivity = Date.now();
+  let lastContentAt = Date.now();
+  const startedAt = Date.now();
+  const { stallTimeoutMs, contentStallMs, maxDurationMs } = limits;
+  /**
+   * WHICH limit the watchdog actually tried to trip, or null if it never did
+   * (docs/17 row 110). The post-loop diagnosis below used to re-derive the
+   * failure from wall-clock deltas alone, so a stream that closed CLEANLY
+   * after a long quiet stretch (`if (done) break`) had its complete answer
+   * thrown away as a `content-stall`/`max-duration` error — a silent loss of
+   * the model's whole reply. The diagnosis now reports the limit the watchdog
+   * armed, and nothing else.
+   */
+  let trippedLimit: 'stall' | 'content-stall' | 'max-duration' | null = null;
+  /**
+   * Read through a function on purpose: `trippedLimit` is assigned inside the
+   * watchdog callback, which TS's control-flow analysis cannot see — a direct
+   * read of it after the loop looks statically `null` to the compiler (and the
+   * linter says so), even though at runtime it is exactly how the diagnosis
+   * knows which limit was armed.
+   */
+  const watchdogVerdict = (): 'stall' | 'content-stall' | 'max-duration' | null => trippedLimit;
+
+  const watchdog = setInterval(() => {
+    const now = Date.now();
+    // The clocks are LIVENESS clocks, not wall clocks: time the page spent
+    // suspended (hidden/frozen/bfcache) was time it could not observe, so it is
+    // credited back instead of billed to the stream (lib/pageLiveness). A
+    // stream that really died still trips its limit — after the resume, its
+    // silence accumulates in full.
+    const silentMs = activeElapsedMs(lastActivity, now);
+    const contentSilentMs = activeElapsedMs(lastContentAt, now);
+    const durationMs = activeElapsedMs(startedAt, now);
+    // Liveness probe first: a caller showing progress must hear from us every
+    // tick, whatever else the watchdog decides about the stream's health.
+    onActivity?.({
+      elapsedMs: durationMs,
+      receivedChars: full.length,
+      phase: full.length > 0 ? 'content' : reasoned ? 'thinking' : 'waiting',
+    });
+    // Order matters for the post-loop diagnosis: the FIRST tripped limit
+    // describes the failure (silence vs keep-alive-only vs plain too long).
+    if (silentMs > stallTimeoutMs) {
+      debugLog('llm', 'watchdog: no bytes — cancelling stream', { silentMs });
+      trippedLimit ??= 'stall';
+      void reader.cancel().catch(() => undefined);
+    } else if (contentSilentMs > contentStallMs) {
+      debugLog('llm', 'watchdog: keep-alives but no content — cancelling stream', {
+        contentSilentMs,
+        receivedChars: full.length,
+      });
+      trippedLimit ??= 'content-stall';
+      void reader.cancel().catch(() => undefined);
+    } else if (durationMs > maxDurationMs) {
+      debugLog('llm', 'watchdog: total duration exceeded — cancelling stream', {
+        durationMs,
+        receivedChars: full.length,
+      });
+      trippedLimit ??= 'max-duration';
+      void reader.cancel().catch(() => undefined);
+    }
+  }, 1000);
+
+  const handleEvent = (payload: string): 'done' | 'continue' => {
+    if (payload === '[DONE]') return 'done';
+    let delta: string | undefined;
+    let errorText: string | undefined;
+    let errorCode: number | string | undefined;
+    let refusalText: string | undefined;
+    let finishReason: string | null | undefined;
+    try {
+      const parsed = JSON.parse(payload) as {
+        choices?: {
+          delta?: {
+            content?: string;
+            reasoning?: string;
+            reasoning_content?: string;
+            refusal?: string;
+          };
+          finish_reason?: string | null;
+        }[];
+        error?: { code?: number | string; message?: string } | string;
+      };
+      delta = parsed.choices?.[0]?.delta?.content;
+      // Reasoning deltas are progress (the model is working) even though they
+      // are not part of the JSON reply — they count toward content activity
+      // and switch the liveness probe to "thinking".
+      const reasoning =
+        parsed.choices?.[0]?.delta?.reasoning ?? parsed.choices?.[0]?.delta?.reasoning_content;
+      if (typeof reasoning === 'string' && reasoning !== '') {
+        reasoned = true;
+        lastContentAt = Date.now();
+        // Illustration only: the reasoning text is forwarded to the UI but is
+        // deliberately NOT appended to `full` — it never becomes part of the
+        // returned answer.
+        onReasoning?.(reasoning);
+      }
+      finishReason = parsed.choices?.[0]?.finish_reason;
+      // OpenAI-style refusal (streamed via delta.refusal): the model declined
+      // the task itself. Censorship class — fails the stream loudly so the
+      // escalation chain can route it to the fallback model (owner: "we
+      // still need repair models, for censorship and congestion"); without a
+      // configured fallback the step fails visibly with the refusal text.
+      refusalText = parsed.choices?.[0]?.delta?.refusal;
+      if (parsed.error !== undefined) {
+        if (typeof parsed.error === 'string') {
+          errorText = parsed.error;
+        } else {
+          errorText = parsed.error.message ?? 'unknown stream error';
+          errorCode = parsed.error.code;
+        }
+      }
+    } catch {
+      return 'continue'; // ignore malformed payloads (comments never reach here)
+    }
+    if (errorText !== undefined) {
+      throw new OpenRouterError('stream-error', response.status, `stream error: ${errorText}`, errorCode);
+    }
+    if (typeof refusalText === 'string' && refusalText !== '') {
+      throw new OpenRouterError('refusal', response.status, `the model refused the task: ${refusalText}`);
+    }
+    if (delta !== undefined && delta !== '') {
+      full += delta;
+      lastContentAt = Date.now();
+      onToken?.(delta);
+    }
+    if (finishReason !== null && finishReason !== undefined) {
+      if (finishReason === 'error') {
+        // Per OpenRouter docs, mid-stream errors terminate with
+        // finish_reason: "error" — even without an error field, that is a
+        // failure, not a completed (truncated) answer. (An error field with
+        // a message already threw above, so errorText is undefined here.)
+        throw new OpenRouterError(
+          'stream-error',
+          response.status,
+          'stream terminated with finish_reason "error"',
+        );
+      }
+      if (finishReason === 'length') {
+        // The model hit its output token limit: the reply is cut off
+        // mid-answer. Returning it would look like a completed reply that
+        // merely fails JSON parsing downstream — the real cause (truncation)
+        // would never reach the user. Fail loudly instead (AGENTS rule 1).
+        throw new OpenRouterError(
+          'length',
+          response.status,
+          'the model hit its output token limit — the reply was truncated mid-answer (finish_reason "length"). Retry, shorten the task, or pick a model with a larger output budget.',
+        );
+      }
+      return 'done';
+    }
+    return 'continue';
+  };
+
+  let firstByteLogged = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastActivity = Date.now();
+      if (!firstByteLogged) {
+        firstByteLogged = true;
+        debugLog('llm', `stream first byte after ${String(Date.now() - startedAt)}ms`);
+      }
+      for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
+        if (handleEvent(payload) === 'done') {
+          // Completion happens before the body is fully drained (the usage
+          // chunk and [DONE] tail are never read): cancel the reader so the
+          // socket is released back to the pool instead of leaking until GC.
+          debugLog(
+            'llm',
+            `stream complete: ${String(full.length)} chars in ${String(Date.now() - startedAt)}ms`,
+          );
+          void reader.cancel().catch(() => undefined);
+          return full;
+        }
+      }
+    }
+  } catch (error) {
+    // Tear the connection down on failures too (mid-stream error event,
+    // abort, watchdog stall) so a broken stream never lingers half-read.
+    void reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    clearInterval(watchdog);
+  }
+  // The stream ended without a completion sentinel: EITHER a watchdog
+  // cancelled it (then the limit it armed is the verdict) OR the socket simply
+  // closed. A clean close after a long silence is a COMPLETE answer (some
+  // providers close the connection instead of sending [DONE]) — the old code
+  // re-derived a stall from the wall-clock delta and threw the answer away.
+  const verdict = watchdogVerdict();
+  if (verdict === 'max-duration') {
+    throw new OpenRouterError(
+      'max-duration',
+      response.status,
+      `stream exceeded ${String(Math.round(maxDurationMs / 1000))}s total — aborted; retry the run`,
+    );
+  }
+  if (verdict === 'content-stall') {
+    throw new OpenRouterError(
+      'content-stall',
+      response.status,
+      `stream delivered no content for ${String(Math.round(contentStallMs / 1000))}s ` +
+        '(keep-alives only) — the provider accepted the request but never answered; retry the run',
+    );
+  }
+  if (verdict === 'stall') {
+    throw new OpenRouterError(
+      'stall',
+      response.status,
+      `stream stalled after ${String(Math.round(stallTimeoutMs / 1000))}s of silence`,
+    );
+  }
+  return full;
+}
+
+/** A /models entry — the app only uses the fields CachedModel carries. */
+export type OpenRouterModel = CachedModel;
+
+// The /models session cache (and its getter) lives in the leaf module
+// /src/llm/modelCache.ts; this re-export keeps the client the single import
+// surface for model metadata.
+export { getCachedModels } from '@/llm/modelCache';
+
+/** Check if a model supports reasoning effort adjustments. */
+export function modelSupportsReasoning(
+  modelId: string,
+  models?: readonly OpenRouterModel[],
+): boolean {
+  if (!modelId) return false;
+  const candidateList = models ?? getCachedModels() ?? undefined;
+  if (candidateList && candidateList.length > 0) {
+    const found = candidateList.find((m) => m.id === modelId);
+    if (found?.supported_parameters) {
+      return (
+        found.supported_parameters.includes('reasoning') ||
+        found.supported_parameters.includes('reasoning_effort')
+      );
+    }
+  }
+  return (
+    /(?:^|\/)(?:o[134]|r1|deepseek-r1|qwq|gemini-2\.5|claude-3[.-]7)/i.test(modelId) ||
+    /:thinking/i.test(modelId) ||
+    /reason/i.test(modelId)
+  );
+}
+
+/** GET /api/v1/models — used by "Test key" and the model combobox. */
+export async function listModels(): Promise<OpenRouterModel[]> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+  const response = await fetch(`${OPENROUTER_BASE}/models`, {
+    headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
+  });
+  if (!response.ok) throw await httpErrorOf(response);
+  const json = modelsResponseSchema.parse(await response.json());
+  const models = (json.data ?? []).filter((model): model is OpenRouterModel => model !== null);
+  setCachedModels(models);
+  return models;
+}
+
+/**
+ * Model ids that can generate images (07-MILESTONE-3 M3-A §Settings): the
+ * /models endpoint is filtered server-side via output_modalities=image; a
+ * client-side check on each entry keeps the result robust.
+ */
+export async function listImageModels(): Promise<string[]> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+  const response = await fetch(`${OPENROUTER_BASE}/models?output_modalities=image`, {
+    headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
+  });
+  if (!response.ok) throw await httpErrorOf(response);
+  const json = modelsResponseSchema.parse(await response.json());
+  const imageModelIds: string[] = [];
+  for (const model of json.data ?? []) {
+    if (model === null) continue;
+    // Preserve the listImageModels behavior: the image-filtered endpoint
+    // carries output_modalities at the entry's top level; an entry without
+    // the field still counts as an image model.
+    if (!(model.output_modalities?.includes('image') ?? true)) continue;
+    imageModelIds.push(model.id);
+  }
+  return imageModelIds.sort();
+}
+

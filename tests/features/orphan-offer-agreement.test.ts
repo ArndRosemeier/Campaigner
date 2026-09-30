@@ -1,0 +1,401 @@
+import 'fake-indexeddb/auto';
+
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { sweepOrphanedArtifacts, type OrphanSweepOutcome } from '@/db/orphanSweep';
+import { db } from '@/db/db';
+import {
+  battleSchema,
+  newId,
+  stampNewEntity,
+  type Battle,
+  type BattleBoard,
+  type EncounterArtifactData,
+  type Id,
+  type Module,
+  type MonsterEntry,
+} from '@/domain';
+import { emptyBoard } from '@/domain/battle/board';
+import {
+  deriveModuleOrphans,
+  NO_SWEEP_REFUSALS,
+  orphanOfferView,
+  type ModuleOrphanRow,
+  type OrphanOfferView,
+} from '@/features/modules/entity-orphans';
+import { clearDatabase } from '../db/helpers';
+import { proseModuleFixture } from '../helpers/moduleSeed';
+
+/**
+ * THE OFFER IS TRUTHFUL — the AGREEMENT PIN (08-MODULE-DESIGNER §M4-C
+ * "Orphaned entities"; docs/17 row 92).
+ *
+ * `entity-orphans.ts` and `orphanSweep.ts` decided "deletable" with two
+ * separate walks of the same guards before this pin existed, and the claim
+ * that tests pinned them to identical decisions was never true: the sweep's
+ * guard tests never compared the two surfaces. The owner paid for the
+ * divergence — "Delete 2 orphans" offered two creatures a live encounter's
+ * roster cites, the sweep refused both, and the offer came back forever.
+ *
+ * Now ONE function (`evaluateOrphanGuards`) decides, and this file pins the
+ * two surfaces per candidate on ONE fixture set covering every guard:
+ * (1) campaign-wide mention, (2) ambiguity shadow, (3) battle portrait token,
+ * (4) frozen seed fighter, (5) encounter roster
+ * (both `npc-ref` and rulebook `mobArtifactId`). Guards 3–4 plus the
+ * cross-module half of guard 1 need data the panel's props do not carry
+ * (docs/18 §4 names the limitation), so the panel's agreement is pinned on
+ * its EFFECTIVE OFFER: the read-time derivation composed with the refusals a
+ * sweep returned (`orphanOfferView`) — after any sweep the panel offers
+ * exactly what the deleter deletes. Since docs/17 row 323 the group IS that
+ * offer: a kept row is held IN USE and is not reported at all, so the pin can
+ * assert the strong property BY CONSTRUCTION — the group's names equal the
+ * sweep's `deleted` names, and the IN USE bucket's names equal its `kept`.
+ */
+
+/** A live battle row carrying the given board/seed fighters (write-normalized). */
+async function putBattle(
+  campaignId: Id,
+  moduleId: Id,
+  board: Partial<BattleBoard>,
+  seedFighters: Battle['seedFighters'] = [],
+): Promise<void> {
+  await db.battles.put(
+    battleSchema.parse({
+      ...stampNewEntity(),
+      campaignId,
+      moduleId,
+      encounterArtifactId: null,
+      reseed: null,
+      board: { ...emptyBoard(), ...board },
+      seedFighters,
+    }),
+  );
+}
+
+function tokenFor(artifactId: Id): Battle['board']['tokens'][number] {
+  return {
+    id: newId(),
+    artifactId,
+    label: 'Fighter',
+    x: 0.5,
+    y: 0.5,
+    visible: true,
+    scale: 1,
+    shape: 'portrait',
+    color: null,
+    currentHp: 10,
+    initiativeRoll: null,
+    initiativeBonus: 2,
+    treasure: '',
+    conditions: [],
+  };
+}
+
+/** Encounter data with the given roster (the full schema shape, typed). */
+function encounterDataWith(monsters: MonsterEntry[]): EncounterArtifactData {
+  return {
+    difficulty: '',
+    levelHint: '',
+    monsters,
+    terrain: '',
+    tactics: '',
+    treasure: '',
+    mapImageId: null,
+    layout: null,
+    preset: 'standard',
+    locationKind: 'other',
+    siteShape: 'single',
+    budgetAdvisory: '',
+  };
+}
+
+function npcRefEntry(name: string, artifactId: Id): MonsterEntry {
+  return { name, count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId } };
+}
+
+/** The panel's read-time derivation, over the campaign pool its props carry. */
+async function panelRows(module: Module): Promise<ModuleOrphanRow[]> {
+  return deriveModuleOrphans(module, await listArtifactsByCampaign(module.campaignId));
+}
+
+/** The panel's EFFECTIVE offer: derivation + the refusals a sweep returned. */
+function offeredView(
+  rows: readonly ModuleOrphanRow[],
+  outcome: OrphanSweepOutcome,
+): OrphanOfferView {
+  return orphanOfferView(rows, new Map(outcome.kept.map((row) => [row.id, row.reason])));
+}
+
+/** Names the group lists — and the group IS the offer (docs/17 row 323). */
+function offeredNames(view: OrphanOfferView): string[] {
+  return view.group.map((row) => row.artifact.name).sort();
+}
+
+/** Names held IN USE — never reported, never offered. */
+function keptInUseNames(view: OrphanOfferView): string[] {
+  return view.keptInUse.map((row) => row.artifact.name).sort();
+}
+
+/** The group's row for one name (undefined = the row is not reported). */
+function groupRow(view: OrphanOfferView, name: string): ModuleOrphanRow | undefined {
+  return view.group.find((row) => row.artifact.name === name);
+}
+
+/** The guard reason an IN USE row carries for a DERIVABLE guard. */
+function keptGuardReason(view: OrphanOfferView, name: string): string | null | undefined {
+  return view.keptInUse.find((row) => row.artifact.name === name)?.refusal?.reason;
+}
+
+beforeEach(clearDatabase);
+
+describe("the owner's exact shape, end to end", () => {
+  it('offers neither lumberjack, and the sweep refuses both with the encounter named', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // The encounter is staged by the prose ([[Bog Ambush]]), so it survives
+    // the sweep and its roster citations keep guarding.
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Bog Ambush]].');
+    const risen = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Risen Lumberjack',
+    });
+    const bog = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Bog Lumberjack',
+    });
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Bog Ambush',
+      data: encounterDataWith([
+        npcRefEntry('Risen Lumberjack', risen.id),
+        npcRefEntry('Bog Lumberjack', bog.id),
+      ]),
+    });
+
+    // The panel: two rows, both IN USE, nothing deletable — the destructive
+    // control cannot appear, and neither row is reported at all (docs/17
+    // row 323), before any sweep has run.
+    const rows = await panelRows(module);
+    expect(rows.map((row) => row.artifact.name)).toEqual(['Bog Lumberjack', 'Risen Lumberjack']);
+    const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
+    expect(offeredNames(view)).toEqual([]);
+    expect(groupRow(view, 'Risen Lumberjack')).toBeUndefined();
+    expect(groupRow(view, 'Bog Lumberjack')).toBeUndefined();
+    expect(keptInUseNames(view)).toEqual(['Bog Lumberjack', 'Risen Lumberjack']);
+    // The refusal the panel carries for a derivable guard is the sweep's own.
+    expect(keptGuardReason(view, 'Risen Lumberjack')).toBe(
+      'roster entry "Risen Lumberjack" of the encounter "Bog Ambush"',
+    );
+    expect(keptGuardReason(view, 'Bog Lumberjack')).toBe(
+      'roster entry "Bog Lumberjack" of the encounter "Bog Ambush"',
+    );
+
+    // The deleter: exactly the same decision, with the same reason text.
+    const outcome = await sweepOrphanedArtifacts(module.id);
+    expect(outcome).toEqual({
+      deleted: [],
+      kept: [
+        { id: bog.id, name: 'Bog Lumberjack', reason: keptGuardReason(view, 'Bog Lumberjack') },
+        {
+          id: risen.id,
+          name: 'Risen Lumberjack',
+          reason: keptGuardReason(view, 'Risen Lumberjack'),
+        },
+      ],
+    });
+    expect((await getArtifact(risen.id))?.name).toBe('Risen Lumberjack');
+    expect((await getArtifact(bog.id))?.name).toBe('Bog Lumberjack');
+
+    // And the offer after the sweep still deletes nothing (no loop).
+    expect(offeredNames(offeredView(rows, outcome))).toEqual([]);
+  });
+});
+
+describe('the panel derivation and the sweep agree per candidate (all five guards)', () => {
+  /**
+   * ONE fixture set, every guard: `Echo` is mentioned by ANOTHER module's
+   * prose (guard 1), `Doppel` twice (guard 2), `Tokened Wraith` on a battle
+   * board (guard 3), `Seeded Wraith` as a frozen seed fighter (guard 4),
+   * `Gate Guard` and
+   * `Goblin` cited by the surviving encounter's roster in both flavors
+   * (guard 5) — and `The Long Winter`, which nothing references, deletes.
+   */
+  async function guardFixture(): Promise<{
+    module: Module;
+    ids: { first: Id; second: Id; free: Id };
+  }> {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
+    const other = await proseModuleFixture(campaign.id, 'Tide Gate', 'The [[Echo]] returns at dusk.');
+
+    // Mentioned only by module B's prose — the panel's props cannot see it.
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Echo',
+    });
+    const first = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Doppel',
+    });
+    const second = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Doppel',
+    });
+    const tokened = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Tokened Wraith',
+    });
+    const seeded = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Seeded Wraith',
+    });
+    const guard = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Gate Guard',
+    });
+    // A CAST creature npc (docs/11 D3/D4): the roster below links it, so it is
+    // in use like any other cited row.
+    const goblin = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Goblin',
+      data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
+    });
+    // REWRITTEN (ledger row 106): the roster used to reach this row by NAME —
+    // a `rulebook` citation called "Cave Fisher" kept a same-named npc alive,
+    // which is the name-matching the core-mob arc removed. A citation names the
+    // LIBRARY, so an authored npc that merely shares the name is NOT in use and
+    // is offered like any other orphan. This row pins exactly that.
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Cave Fisher',
+    });
+    const free = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ambush',
+      data: encounterDataWith([
+        npcRefEntry('Gate Guard', guard.id),
+        npcRefEntry('Goblin', goblin.id),
+        // A library citation: it resolves to the bestiary, never to the npc
+        // above that shares its name.
+        {
+          name: 'Cave Fisher',
+          count: 2,
+          notes: '',
+          treasure: '',
+          source: { type: 'none' as const },
+        },
+      ]),
+    });
+    // The battle lives in the OTHER module — the guard is campaign-wide.
+    await putBattle(campaign.id, other.id, { tokens: [tokenFor(tokened.id)] }, [
+      { id: seeded.id, name: 'Seeded Wraith', maxHp: 9, initiativeBonus: 2 },
+    ]);
+    return { module, ids: { first: first.id, second: second.id, free: free.id } };
+  }
+
+  it('the derivation refuses the two derivable guards, and names what it cannot judge', async () => {
+    const { module } = await guardFixture();
+    const rows = await panelRows(module);
+    const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
+
+    // Derivable at read time: the encounter roster (both flavors). The
+    // ambiguity shadow is hidden entirely (the duplicate must be resolved),
+    // and both roster-cited rows are held OUT of the group (not reported).
+    expect(keptGuardReason(view, 'Gate Guard')).toBe(
+      'roster entry "Gate Guard" of the encounter "Ambush"',
+    );
+    expect(keptGuardReason(view, 'Goblin')).toBe(
+      'roster entry "Goblin" of the encounter "Ambush"',
+    );
+    expect(groupRow(view, 'Gate Guard')).toBeUndefined();
+    expect(groupRow(view, 'Goblin')).toBeUndefined();
+    expect(keptInUseNames(view)).toEqual(['Gate Guard', 'Goblin']);
+    // The name twin is NOT in use: the citation above names a library creature,
+    // not this row, and no name-matching survives (ledger row 106) — so it is
+    // reported in the group like any other orphan.
+    expect(groupRow(view, 'Cave Fisher')).toBeDefined();
+    expect(view.hidden.map((row) => row.artifact.name)).toEqual(['Doppel', 'Doppel']);
+
+    // NOT derivable from these props (docs/18 §4): the cross-module mention
+    // and the battle carriers are still offered until a
+    // sweep has spoken — named here so the limitation cannot be forgotten.
+    expect(offeredNames(view)).toEqual([
+      'Cave Fisher',
+      'Echo',
+      'Seeded Wraith',
+      'The Long Winter',
+      'Tokened Wraith',
+    ]);
+  });
+
+  it('agrees with the sweep per candidate once the sweep has decided', async () => {
+    const { module, ids } = await guardFixture();
+    const rows = await panelRows(module);
+    const outcome = await sweepOrphanedArtifacts(module.id);
+    const view = offeredView(rows, outcome);
+
+    // Per candidate: reported ⇔ deleted — ONE predicate, no drift — and every
+    // row the guards keep is held OUT of the group, so it is deleted by
+    // NEITHER the panel's offer nor the sweep (docs/17 row 323).
+    expect(offeredNames(view)).toEqual([...outcome.deleted.map((row) => row.name)].sort());
+    expect(offeredNames(view)).toEqual(['Cave Fisher', 'The Long Winter']);
+    expect(keptInUseNames(view)).toEqual([...outcome.kept.map((row) => row.name)].sort());
+    expect(keptInUseNames(view)).toEqual([
+      'Echo',
+      'Gate Guard',
+      'Goblin',
+      'Seeded Wraith',
+      'Tokened Wraith',
+    ]);
+    for (const row of view.keptInUse) {
+      expect(groupRow(view, row.artifact.name)).toBeUndefined();
+      expect(outcome.kept.some((kept) => kept.id === row.artifact.id)).toBe(true);
+    }
+    for (const row of view.group) {
+      expect(outcome.deleted.some((deleted) => deleted.id === row.artifact.id)).toBe(true);
+    }
+    // The partition of the tagged rows is total: every tagged row is reported
+    // or held IN USE or ambiguity-hidden, never dropped (docs/17 row 323).
+    expect(view.group.length + view.keptInUse.length + view.hidden.length).toBe(rows.length);
+
+    // The shadowed pair is outside the group AND outside the sweep's report
+    // (the offered predicate, unchanged) — and untouched on disk.
+    expect(view.hidden.map((row) => row.artifact.name)).toEqual(['Doppel', 'Doppel']);
+    expect(await getArtifact(ids.first)).toBeDefined();
+    expect(await getArtifact(ids.second)).toBeDefined();
+    // The genuinely unreferenced orphan was offered AND deleted.
+    expect(await getArtifact(ids.free)).toBeUndefined();
+  });
+});

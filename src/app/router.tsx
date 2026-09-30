@@ -1,0 +1,68 @@
+import { createBrowserRouter } from 'react-router-dom';
+
+import { NotFoundPage } from '@/components/NotFoundPage';
+import { AppShell } from '@/app/layout/AppShell';
+import { ROUTES } from '@/app/routes';
+import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
+import { GraphPage } from '@/features/campaign/GraphPage';
+import { WorkspacePage } from '@/features/campaign/WorkspacePage';
+import { BattleSurface } from '@/features/play/battle/BattleSurface';
+import { BoardPage } from '@/features/modules/board/BoardPage';
+import { CanvasPage } from '@/features/modules/canvas/CanvasPage';
+import { ModuleReaderPage } from '@/features/modules/ModuleReaderPage';
+import { CampaignDocumentPage } from '@/features/modules/CampaignDocumentPage';
+import { SpellsPage } from '@/features/spells/SpellsPage';
+import { RulesPage } from '@/features/rules/RulesPage';
+import { LabPage } from '@/features/lab/LabPage';
+import { SettingsPage } from '@/features/settings/SettingsPage';
+import { GuidePage } from '@/features/guide/GuidePage';
+import { IdeaBoardPage } from '@/features/idea-board/IdeaBoardPage';
+
+/**
+ * Builds the app's route table, per 05-UI.md §Routes. All pages render inside
+ * `AppShell` so the top bar is present on every route.
+ *
+ * Exported as a factory so tests can mount a fresh router bound to the current
+ * URL; the app itself uses the singleton below.
+ */
+export type AppRouter = ReturnType<typeof createBrowserRouter>;
+
+/** Vite `BASE_URL` always ends with `/`; React Router wants no trailing slash. */
+function appBasename(): string {
+  const base = import.meta.env.BASE_URL;
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
+export function createAppRouter(): AppRouter {
+  return createBrowserRouter(
+    [
+      {
+        path: ROUTES.campaignPicker,
+        element: <AppShell />,
+        children: [
+          { index: true, element: <CampaignPickerPage /> },
+          { path: ROUTES.workspace, element: <WorkspacePage /> },
+          { path: ROUTES.artifact, element: <WorkspacePage /> },
+          { path: ROUTES.graph, element: <GraphPage /> },
+          { path: ROUTES.battle, element: <BattleSurface /> },
+          { path: ROUTES.board, element: <BoardPage /> },
+          { path: ROUTES.canvas, element: <CanvasPage /> },
+          { path: ROUTES.document, element: <CampaignDocumentPage /> },
+          { path: ROUTES.spells, element: <SpellsPage /> },
+          { path: ROUTES.module, element: <ModuleReaderPage /> },
+          { path: ROUTES.rules, element: <RulesPage /> },
+          { path: ROUTES.ideaBoard, element: <IdeaBoardPage /> },
+          { path: ROUTES.settings, element: <SettingsPage /> },
+          { path: ROUTES.lab, element: <LabPage /> },
+          { path: ROUTES.guide, element: <GuidePage /> },
+          { path: ROUTES.guideChapter, element: <GuidePage /> },
+          { path: '*', element: <NotFoundPage /> },
+        ],
+      },
+    ],
+    { basename: appBasename() },
+  );
+}
+
+/** The router instance used by the running app. */
+export const router: AppRouter = createAppRouter();

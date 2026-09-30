@@ -1,0 +1,33 @@
+{
+  "_id": "L9ZV076913otGtiB",
+  "name": "Rations",
+  "type": "consumable",
+  "img": "systems/pf2e/icons/equipment/adventuring-gear/rations.webp",
+  "system": {
+    "level": {
+      "value": 0
+    },
+    "price": {
+      "per": 1,
+      "value": {
+        "sp": 4
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "value": []
+    },
+    "description": {
+      "value": ""
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder Player Core"
+    },
+    "bulk": {
+      "value": 0.1
+    },
+    "rules": []
+  }
+}

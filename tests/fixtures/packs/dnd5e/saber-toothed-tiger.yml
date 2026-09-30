@@ -1,0 +1,236 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/beast/saber-toothed-tiger.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+_id: tYYoifu9teGLetVI
+name: Saber-Toothed Tiger
+type: npc
+system:
+  abilities:
+    str:
+      value: 18
+      proficient: 0
+    dex:
+      value: 14
+      proficient: 0
+    con:
+      value: 15
+      proficient: 0
+    int:
+      value: 3
+      proficient: 0
+    wis:
+      value: 12
+      proficient: 0
+    cha:
+      value: 8
+      proficient: 0
+  attributes:
+    ac:
+      flat: 12
+      calc: natural
+      formula: ''
+    hp:
+      value: 52
+      max: 52
+      temp: null
+      tempmax: null
+      formula: 7d10 + 14
+    movement:
+      burrow: 0
+      climb: 0
+      fly: 0
+      swim: 0
+      walk: 40
+      units: ft
+      hover: false
+    senses:
+      darkvision: 0
+      blindsight: 0
+      tremorsense: 0
+      truesight: 0
+      units: ft
+      special: ''
+    spellcasting: ''
+  details:
+    alignment: Unaligned
+    type:
+      value: beast
+      subtype: ''
+      swarm: ''
+      custom: ''
+    environment: Mountain
+    cr: 2
+  traits:
+    size: lg
+    languages:
+      value: []
+      custom: ''
+    di:
+      value: []
+      bypasses: []
+      custom: ''
+    dr:
+      value: []
+      bypasses: []
+      custom: ''
+    dv:
+      value: []
+      bypasses: []
+      custom: ''
+    ci:
+      value: []
+      custom: ''
+  skills:
+    prc:
+      value: 1
+      ability: wis
+    ste:
+      value: 2
+      ability: dex
+items:
+  - _id: npiswgaiGzupcEmw
+    name: Bite
+    type: weapon
+    system:
+      proficient: null
+      properties: []
+      type:
+        value: natural
+        baseItem: ''
+      range:
+        value: null
+        long: null
+        units: ft
+        reach: null
+      damage:
+        versatile:
+          number: null
+          denomination: null
+          bonus: ''
+          types: []
+          custom:
+            enabled: false
+            formula: ''
+          scaling:
+            mode: ''
+            number: null
+            formula: ''
+        base:
+          number: null
+          denomination: null
+          bonus: ''
+          types:
+            - piercing
+          custom:
+            enabled: true
+            formula: 1d10 + @mod + 1
+      activities:
+        y6cNhRnpGiEVHHXw:
+          type: attack
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false
+          attack:
+            ability: ''
+            bonus: ''
+            flat: false
+            critical:
+              threshold: null
+            type:
+              value: ''
+              classification: ''
+          damage:
+            includeBase: true
+            parts: []
+            critical:
+              bonus: ''
+  - _id: I9zJprscDFYpwwJR
+    name: Claw
+    type: weapon
+    system:
+      proficient: null
+      properties: []
+      type:
+        value: natural
+        baseItem: ''
+      range:
+        value: null
+        long: null
+        units: ft
+        reach: null
+      damage:
+        versatile:
+          number: null
+          denomination: null
+          bonus: ''
+          types: []
+          custom:
+            enabled: false
+            formula: ''
+          scaling:
+            mode: ''
+            number: null
+            formula: ''
+        base:
+          number: null
+          denomination: null
+          bonus: ''
+          types:
+            - slashing
+          custom:
+            enabled: true
+            formula: 2d6 + @mod + 1
+      activities:
+        k3Hn0VeMFjz7AKrg:
+          type: attack
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false
+          attack:
+            ability: ''
+            bonus: ''
+            flat: false
+            critical:
+              threshold: null
+            type:
+              value: ''
+              classification: ''
+          damage:
+            includeBase: true
+            parts: []
+            critical:
+              bonus: ''
+  - _id: VoyNdCLFhXcu3pSQ
+    name: Keen Smell
+    type: feat
+    system:
+      description:
+        value: <p>The [[lookup @name lowercase]]{monster} has advantage on Wisdom (Perception) checks that rely on smell.</p>
+      activities: {}
+  - _id: 9Ayx6ARdliy8D5lj
+    name: Pounce
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>If the [[lookup @name lowercase]]{monster} moves at least 20 feet straight toward a creature and then hits
+          it with a @UUID[Compendium.dnd5e.monsters.Actor.FayqbnjBMszO6Pat.Item.7GCnVtakQo6iZyn7]{claw} attack on the
+          same turn, that target must succeed on a [[/save]] saving throw or be knocked &amp;Reference[prone].</p><p>If
+          the target is prone, the [[lookup @name lowercase]]{monster} can make one [[/item .npiswgaiGzupcEmw]]{bite}
+          attack against it as a bonus action.</p>
+      activities:
+        8dIa5DwJPOAhNkpx:
+          type: save
+          activation:
+            type: special
+            value: null
+            condition: >-
+              When the [[lookup @name lowercase]]{monster} moves at least 20 feet straight toward a creature and then
+              hits it with a @UUID[Compendium.dnd5e.monsters.Actor.tYYoifu9teGLetVI.Item.I9zJprscDFYpwwJR]{claw} attack
+              on the same turn.
+            override: false

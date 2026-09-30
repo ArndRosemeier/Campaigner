@@ -1,0 +1,493 @@
+# 04 — OpenRouter Client & Persona Engine
+
+## OpenRouter client (`/src/llm/openrouter.ts`)
+
+```ts
+interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
+interface ChatOptions {
+  model: string; temperature: number;
+  responseFormat?: 'json' | SchemaResponseFormat;
+  // 'json'               → response_format: { type: 'json_object' } (best-effort)
+  // SchemaResponseFormat → response_format: { type: 'json_schema',
+  //                        json_schema: { name, strict: true, schema } }
+  // (build with schemaResponseFormat(name, zodSchema), /src/llm/strictSchema.ts)
+  signal?: AbortSignal;
+  onToken?: (delta: string) => void;   // streaming callback
+  onReasoning?: (delta: string) => void; // reasoning-delta stream (illustration only)
+}
+async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>;
+```
+
+- Endpoint `POST https://openrouter.ai/api/v1/chat/completions`, headers
+  `Authorization: Bearer <settings.openRouterApiKey>`,
+  `HTTP-Referer: 'https://campaigner.local'`, `X-Title: 'Campaigner'`.
+- Always request `stream: true`; parse SSE per the WHATWG spec (`data: {json}` /
+  `data: [DONE]`, `:`-prefixed keep-alive comments like `: OPENROUTER PROCESSING`
+  are ignored), concatenate `choices[0].delta.content`, invoke `onToken` per delta.
+  Reasoning deltas (`delta.reasoning` / `delta.reasoning_content`) drive the
+  liveness probe ("thinking") and are forwarded via `onReasoning` for display
+  only — they are never appended to the returned answer and never persisted.
+- Stream completion: whichever comes first of `[DONE]`, a clean connection
+  close, or `choices[0].finish_reason` (the terminal finish_reason repeats on
+  OpenRouter's accounting usage chunk — treat it as an accounting frame, not a
+  second terminal event). The reader is cancelled on completion/failure so the
+  connection returns to the pool.
+- Stream failures are surfaced, never hung: a top-level `error` field or
+  `finish_reason: "error"` throws `OpenRouterError`; no bytes for 120s (stall
+  watchdog, keep-alives count as activity) aborts with a stall error.
+- Errors: non-200 → throw `OpenRouterError(status, bodyText)`. 429/5xx: retry
+  twice with 2s/8s backoff before throwing. On a 429 a `Retry-After` hint
+  (seconds or HTTP-date, capped at 30s) replaces the plain backoff, and every
+  backoff carries ±25% jitter so parallel workers do not retry in lockstep.
+  Missing API key → throw
+  `MissingApiKeyError` (UI catches this and opens Settings).
+- Rate limits are per OpenRouter ACCOUNT: paid models have no platform
+  request cap (upstream provider limits apply, with automatic provider
+  failover), while `:free` models are capped at 20 requests/minute and
+  50–1000 requests/day (by lifetime credit history). Mid-stream 429s arrive
+  as `finish_reason: "error"` and surface like any other stream failure.
+  Parallel generation (Settings → Parallel requests, see 05-UI) multiplies
+  simultaneous traffic — keep the level low for `:free` models.
+- Model escalation (`/src/llm/modelFallback.ts`): when `fallbackChatModel` is
+  set, `chat()` walks `[primary, fallback]` and EVERY failure escalates to
+  the next model — owner decision (2026-09-07): "ANY ERROR, ANY AT ALL
+  should lead to the fallback." The chain itself is the bound: only an
+  exhausted chain fails the call, with one combined error naming every
+  model tried (the last error's kind/status survive). The only
+  non-escalating errors are the model-independent ones —
+  `MissingApiKeyError` (no key fails identically for every model) and
+  user-initiated aborts (`AbortError` from the caller's signal; escalating
+  would defy the stop; the transport's own watchdog aborts with
+  `TimeoutError`, which escalates). 'length' truncation, strict-schema
+  rejections, unknown 400s (e.g. Meta's "The response was filtered due to
+  the prompt triggering our content management policy.", which
+  `FILTER_PATTERN` never matched), watchdog stalls, refusals — all
+  escalate. Failure classification (`failureKindOf`/`fallbackReasonFor`,
+  'congestion'/'filter'/…) remains as the Details-view ANNOTATION only; it
+  no longer gates anything. Vision requests (image input) still skip a
+  fallback the cached `/models` data knows is text-only — a text-only
+  fallback cannot serve the request at all. `chat()` returns
+  `ChatResult { text, modelUsed, fallback }`; run steps persist an
+  escalation `notice` so a fallback is visible, never silent.
+- Contract repair escalates too: the ONE automatic retry after a schema/
+  contract failure runs on the fallback model when configured
+  (`repairModel()`; vision repairs via `visionRepairModel()`), because a
+  violated contract is usually a capability weakness of the first-try model.
+  Under strict structured outputs (below) the decoder can no longer produce
+  a wrong SHAPE, so these paths fire rarely (providers that silently ignore
+  strict mode) — they are deliberately KEPT for the censorship and
+  congestion classes and for parse failures.
+
+### Strict structured outputs (owner decision)
+
+Every contract-shaped chat call sends its zod schema as
+`response_format: { type: 'json_schema', json_schema: { name, strict: true,
+schema } }`; OpenRouter enforces it token-level for supporting models, so the
+model CANNOT produce a wrong shape. `/src/llm/strictSchema.ts` converts and
+normalizes each contract to the strict subset:
+
+- `additionalProperties: false` on every object; ALL properties required.
+  zod v4 `io:'output'` conversion makes `.default()` fields required (the
+  runtime default only fires for non-LLM inputs); `.optional()` fields are
+  re-emitted required + nullable and their LLM-facing schemas parse `null`
+  back to `undefined` (the "absentable" convention — draft/brief
+  `sourceChunkIndex`, `sourceName`, `statBlock`).
+- Preprocessors/coercions emit their inner output shape (booleanish →
+  boolean, case-insensitive enums → the enum, `z.coerce.number()` →
+  integer); the parsers keep tolerating legacy variants for non-strict
+  sources (hand edits, old rows, pack imports).
+- Free-form `z.record()` properties cannot exist in strict mode — the
+  StatBlock `extras` record is DROPPED from the emitted schema: LLM-drafted
+  stat blocks carry no extras; hand edits and pack imports still do.
+- Constraint keywords (minLength/maxLength/minimum/maximum/minItems/
+  maxItems/pattern/format/`default`/`$schema`) are stripped — the zod parse
+  at the boundary still enforces them.
+- Recursion (`$ref` cycles), record roots and non-object roots throw
+  `StrictSchemaError` loudly. No current contract recurses.
+
+Failure behavior (loud, never silent):
+
+- A provider that rejects the schema (HTTP 400/422) is recorded as
+  `kind: 'schema-rejected'`, naming the model (Details view). The chain
+  escalates to the next model like for any other failure (owner decision
+  2026-09-07 — another model may support strict mode); without a fallback
+  configured the failure stays loud. No automatic DOWNGRADE exists: the
+  strict `json_schema` response_format rides every escalation attempt.
+- A model refusal arrives as OpenAI-style `delta.refusal` →
+  `kind: 'refusal'`, classified `filter`: with a fallback model configured
+  the chain retries censorship there (owner: "we still need repair models,
+  for censorship and congestion"); without one the step fails visibly with
+  the refusal text.
+- Strict mode fixes SHAPE only. All semantic checks are unchanged: fix-02
+  uncited-draft repair, verification notices, review pauses. A parse failure
+  (a provider ignoring strict mode) still lands in the existing repair
+  retry → pause/review path.
+
+The Settings toggle **Strict structured outputs** (`strictOutputs`, default
+ON; old rows parse via the post-M3 field convention) is the ONLY way a call
+downgrades to the old best-effort `json_object` mode — for models whose
+provider genuinely cannot enforce schemas. There is no automatic downgrade
+anywhere.
+
+**Coverage (contract-shaped calls):** runEngine draft (all kinds) /
+statblock / continuity check / encounter brief; module spine + its repair
+retry; entity normalization + its repair retry; encounter-map verify +
+vision repair. Pure-prose calls have no zod contract and stay
+unconstrained: module part writing (length-only retry), image prompts
+(no LLM draft call).
+
+## Built-in personas (`/src/llm/personas/builtins.ts`)
+
+Seed on app start (insert if slug missing; never overwrite user edits).
+Milestone 1 shipped **NPC Smith** fully wired; the other definitions are seeded
+but their runs reuse the exact same pipeline with different prompts and
+`producesKind` (implement in M2 — pipeline must not hardcode NPC anywhere
+except step `statblock`, which runs for the two kinds that OWN a stat block,
+`producesKind === 'npc'` and `producesKind === 'pc'` (docs/17 row 373), and is
+dropped for every other kind).
+
+`producesKind` is required for generate/review personas; image personas
+(`mode: 'image'`, M3-A) never produce an artifact and omit it. Image personas
+are not chainable (chainRunner/moduleForge reject them).
+
+| slug             | name              | producesKind | mode     | one-line purpose                       |
+|------------------|-------------------|--------------|----------|----------------------------------------|
+| pc-smith         | Character Smith   | pc           | generate | ONE full player character from the description already on the row (docs/17 row 373; the player card's "Generate with AI"). Deliberately SPARSE: the system's rules are the model's, the app explains only the FORMAT, and no count of spells/cantrips/options may be invented. Not a mob smith |
+| npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
+| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; hazards welcome. The monster boundary is NOT carried by this prompt (a built-in prompt is a seed-once row — see below): it is ENFORCED in code, keyed by kind, in `buildEntityBrief` (docs/17 row 140) — the opposition belongs to the encounter artifact, `inhabitants` means people and factions, and a location writes no tactics and no GM handling advice |
+| event-weaver     | Event Weaver      | event        | generate | Social/non-combat occasions; location-shaped, with the SAME kind-keyed ownership boundary in code (docs/17 row 140) |
+| faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks — and the fight is the encounter's: no preferred tactics, enforced by the kind-keyed boundary in code (docs/17 row 140) |
+| plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
+| arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
+| encounter-smith  | Encounter Smith   | encounter    | generate | Balanced encounters with monsters       |
+| encounter-cartographer | Encounter Cartographer | encounter | encounter | Complete room layouts and generated battlemaps |
+| continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
+| illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |
+
+**A built-in prompt is DISCRETIONARY — an enforcement rule can never live in
+one** (docs/17 row 140, docs/18 §4). "Insert if slug missing; never overwrite
+user edits" cuts both ways: `seed.seedBuiltInPersonas` skips a slug that already
+exists (`db/personaRepo.ts:32`), so editing a prompt in `builtins.ts` reaches a
+NEW install only and every install that already exists keeps the old bytes
+forever. The owner was asked whether to refresh un-hand-edited built-in rows and
+DECIDED AGAINST IT, verbatim: *"If the user wants to regenerate things with a new
+prompt he can already do so, so... no need for that. I dont see that as something
+that will happen often-"* — the user's channel is Settings → Personas → Reset to
+default (then regenerate) and it is expected to be rare. So persona text carries
+STYLE, emphases and habits; a rule that must hold for every generation belongs in
+code, at a seam every call passes through (`buildEntityBrief`'s kind-keyed
+ownership paragraph is the worked example). Do not "fix" a boundary or a refusal
+by editing a built-in prompt.
+
+**DETAIL, not STORY — the description discipline on exactly three personas**
+(docs/17 row 365, owner request: *"The artefact personas for NPCs and locations
+and factions ... should know the context (as they do now) but be instructed to
+NOT include any story elements in their description. The module text tells the
+story, the descriptions just provide details, they are not meant to drive the
+plot"*). ONE exported clause, `builtins.DETAILS_NOT_STORY_CLAUSE`, is composed
+by EXACTLY `npc-smith` (kind `npc`), `worldbuilder` (`location`) and
+`faction-designer` (`faction`), inserted between each prompt's existing
+grounding sentences and its JSON contract — the module context is untouched and
+the clause is purely ADDITIVE (pinned by reconstructing each pre-change prompt
+from a golden captured before the landing). It says, in the owner's terms, that
+the description is DETAIL a GM uses (appearance, manner, facts, relationships,
+wants and quirks; a place's texture, features and feel; a faction's structure,
+methods, resources and character), forbids the story elements (no scene
+narration, no plot events, no "the party arrives and ...", nothing that advances
+or resolves the plot) and names the reason — the MODULE TEXT tells the story,
+and events and encounters are where story belongs. `note` is EXEMPT on purpose:
+that is what the Plot Architect and the Continuity Editor write, and their
+content IS the plot (owner decision: *"NPC, location, faction only — plot and
+notes stay story"*); `event-weaver`, `arc-weaver`, both encounter personas and
+`illustrator` are exempt for the same reason, and every exempt prompt is pinned
+BYTE-IDENTICAL (`tests/llm/personaDescriptionClause.test.ts`). Because a
+built-in prompt is a seed-once row (above), this clause reaches a NEW install
+only: in an install that already holds the three personas, press **Settings →
+Personas → Reset to default** on each (docs/18 §4, docs/17 row 140).
+
+`postCreateExtras` (optional, declared) — the extras the creation dialog
+offers for a NEWLY created artifact; unset → derived from `mode`/`producesKind`
+(extrasForPersona): every creator offers `image`; npc adds `statBlock`
+(verification-only, see finalize); `encounter` adds `mobPortraits`, and the
+content-only Smith (mode `generate`) also offers `battlemap` — the
+Cartographer (mode `encounter`) already produces the map in-run. Review and
+image personas offer nothing. Built-ins declare their sets explicitly.
+
+### Encounter Cartographer pipeline
+
+Mode `encounter` runs fixed steps `brief → layout → schematic → stylize →
+verify → pick → finalize`. The LLM brief contains roster sources, room purpose,
+adjacency and roster indexes but no coordinates. Pure code packs and validates
+geometry; the schematic becomes an image input reference; a multimodal vision
+check classifies a coarse floor/wall/void grid and flags mismatches above 12%.
+Manual runs pause at brief, layout and map pick; auto picks candidate one.
+Regeneration preserves artifact identity, prose, links and roster while
+replacing layout/map. Module batches request one candidate and continue after
+per-encounter failures. All long paths report through the shared progress dock.
+
+NPC Smith `systemPrompt` (verbatim):
+
+```
+You are NPC Smith, an expert at creating memorable tabletop-RPG NPCs.
+You write vivid but concise material a GM can use at the table with zero prep.
+You ground all mechanical content (stats, abilities, DCs) in the rules excerpts
+provided to you, citing book and page when you rely on them. When rules are
+missing you make sensible d20-standard assumptions and say so.
+You write DETAIL for the GM's table, not STORY. Detail is what an
+NPC, a place or a faction IS: appearance, manner, facts, relationships, wants
+and quirks; the texture, features and feel of a place; the structure, methods,
+resources and character of a faction. The module text tells the story — what
+happens, who acts and how it ends — so a description that narrates events
+duplicates the module and takes the plot away from the artifacts that own it
+(events and encounters are where story belongs). Keep story elements out of
+your description: no scene narration, no plot events, no "the party arrives
+and ...", nothing that advances or resolves the plot. Use the context you are
+given to make the detail specific, not to recount what happens.
+Always answer in the exact JSON format requested. Never include commentary
+outside the JSON.
+```
+
+## Run pipeline (`/src/llm/runEngine.ts`)
+
+A `PersonaRun` executes fixed named steps. The engine is a plain async class
+holding the current run; UI observes the run row via `useLiveQuery` (engine
+persists the run after every state change) plus an in-memory event emitter for
+streaming tokens.
+
+Steps for every persona (M1):
+
+1. **retrieve** — build query from `userBrief` (+ campaign system name), call
+   `searchRules(query, { limit: 8 })`, merge with user-pinned chunks
+   (pinned first, cap total 12). `output` = chunk ids + titles.
+2. **draft** — messages: persona systemPrompt; user message containing:
+   campaign name/system/description, the brief, rule excerpts (each prefixed
+   `[<bookTitle> p.<pageStart>] <headingPath joined by ' > '>`), and the JSON
+   output instruction for the persona's kind (below). Strict structured
+   outputs: `responseFormat: schemaResponseFormat('<kind>-draft', schema)`.
+   Parse with the kind's zod draft schema. Parse failure → one automatic retry
+   appending "Your previous reply was invalid JSON for the schema: <issues>.
+   Reply with corrected JSON only." Second failure → run `status:'needs_review'`
+   with raw text stored in `output`. Under `auto` autonomy there is no user to
+   rescue a rejected draft, so the run **fails** with a "Draft rejected"
+   error instead of finalizing an empty artifact (finalize's persona-name
+   fallback is unreachable for generate personas). Draft schemas tolerate
+   common model variations: bare strings for object lists (pointsOfInterest,
+   ranks, beats), objects inside string lists (hooks/prep/openThreads),
+   numeric-string counts, and a single string or omitted `suggestedTags`.
+3. **statblock** (`npc` and `pc` — the two kinds that own a stat block, docs/17
+   row 373) — second LLM call asking to fill the `StatBlock` JSON schema. For an
+   NPC: at a user-hinted level (from brief) grounded in the excerpts, offered the
+   campaign's imported spell corpus and checked against it. For a player
+   character: the FORMAT only (the `pc-smith` persona's arm), with no corpus
+   whitelist, no "2 cantrips, then 2 spells of each rank" caster clause and no
+   no-invention spell repair or "Unresolved mob spells" notice — the model knows
+   the system's rules and the app does not enumerate the character's options;
+   a module level hint never binds or rejects a PC's block. Same retry policy.
+   Skippable by user for an NPC; a PC always runs it and a PC row without a
+   stat block stays legal (docs/17 row 308).
+4. **finalize** — create the Artifact (kind from persona), revision 1,
+   `source:'persona'`, `runId` set; link run `resultArtifactId`. The run's
+   `placementModuleId` (creation dialog, one-off) is applied on fresh creates
+   only — a targeted in-place fill with placement set fails loudly. When the
+   stat-block extra is ticked and the created npc has `statBlock: null`,
+   finalize persists the notice "No stat block was generated — add one in the
+   artifact editor." (never a fabricated block). Post-create extras (image /
+   mobPortraits / battlemap) run after completion in the shared unattended
+   queues (src/features/campaign/post-run-extras.ts) — a completed run is
+   never reopened or failed by them.
+
+### Draft JSON contracts (zod in `/src/llm/schemas.ts`)
+
+`NpcDraftSchema`: `{ name, summary, appearance, personality,
+suggestedTags: string[], body, needsStatBlock: boolean }` — `body` is markdown
+for the artifact body. The draft contract is deliberately minimal (M4-C
+simplification: role/motivation/secrets/voiceNotes were removed — enforced
+prose fields made every NPC same-shaped); whatever else a character needs
+goes into the free-form `body`. `needsStatBlock` lets the draft skip the
+statblock step entirely for characters whose stats don't matter at the table
+(contacts, merchants, innkeepers). (Location/Faction draft schemas mirror
+their `data` fields; define them in M1 too, they're cheap. Event reuses the
+Location contract verbatim — `eventDraftSchema` is an alias, registered under
+its own `event-draft` strict-schema name.)
+
+**Minimum content (owner-ratified empty-text rejection).** `name`, `summary`
+and `body` are substance fields: each must carry at least one non-whitespace
+character (`substanceText` in schemas.ts — the floor is deliberately one
+char, not a prose minimum, so short notes and hooks never over-reject). The
+strict JSON schema cannot express this (constraint keywords are stripped),
+so the zod parse enforces it at the boundary: a violation is a NAMED issue
+riding the existing one-repair turn ("body is empty — …"), then the loud
+rejected path (review pause under manual/review, run failure under `auto`).
+Finalize re-guards the same invariant — a user-edited draft is not
+schema-validated — so an empty body refuses to create or overwrite: an
+in-place refill that comes back empty keeps the existing content and fails
+the run loudly. Never materialize empty text.
+
+**The refill states the target's IDENTITY, and a returned name that belongs to
+another artifact is refused (owner report, docs/17 row 226).** An in-place
+refill (`targetArtifactId`) states the target's own name in its draft prompt,
+through the entity lane's ONE composer
+(`promptScaffolding.entityNameVerbatimSentence`), read off the target row the
+engine already loads (`targetModuleGrounding.targetName`) and placed right
+after the `Task:` line — so the model is told WHICH artifact it is
+regenerating even though the panel's brief is generic. The anchor is skipped
+when the brief already carries the sentence (`buildEntityBrief`'s callers).
+Because the campaign grounding deliberately injects a co-mentioned entity's
+module prose, a model with no anchor can answer as that neighbour; the anchor
+is the cure, and it is an INSTRUCTION — a model can ignore it. The safety net
+is the ALIAS GUARD: `artifactRepo.foreignAliasNames` is the ONE lookup for
+"does this name already answer for a different artifact?", every alias write
+asks it, and a refused name is never stored but IS spoken — the run's finalize
+notice and a `toastError`, through `domain/artifactAlias.aliasCollisionSentence`.
+The stored row keeps its name and gets the reply's content; the foreign name
+does not become an "also known as" line, and the drift is on screen.
+
+**Escape-debris hygiene (detection backstop for the UTF-8 contract).** The
+generation-language directive (`src/llm/language.ts`) requires non-ASCII
+written directly as UTF-8 (prevention); model prose still intermittently
+arrives as half-formed unicode escapes (`Flussmündung` → `Flussm?fcndung`).
+`findEscapeDebris` (`src/lib/encodingHygiene.ts`, pure) flags the two shapes
+in already-decoded text — `?` immediately followed by exactly two lowercase
+hex chars forming a non-ASCII codepoint tail, and a literal `\uXXXX`
+(which valid decoded text must never contain) — and finalize scans the
+effective draft (body/summary/name, encounter monster notes/treasure) plus
+the statblock strings BEFORE any create/updateArtifact. A hit rejects the
+step LOUDLY with the debris named in the issues (review pause under
+manual/review, run failure under `auto`), and nothing persists. Never
+repair-and-continue, never a placeholder.
+
+**Prompt-scaffolding echo (the prompt we SENT must never come back as content).**
+The brief and the schema-repair prompts are OURS, verbatim, and a model
+intermittently echoes one of them back into the text it was asked to write — the
+owner found *"The artifact \"name\" field must be exactly \"Nisselkraut\" —
+verbatim, with no epithets, titles, or additions (put those in the body). Do not
+invent unrelated sub-plots; make this entity serve the module text. Campaign
+grounding (derived from wiki-links): -"* PRINTED in a generated artifact. Every
+fixed sentence and section label a brief or a repair prompt is built from is
+therefore exported from ONE module (`src/llm/promptScaffolding.ts`), the
+composers (`features/modules/persona-request`, `llm/runEngine`'s repair turns,
+`llm/moduleGen`'s spine/part repair turns, `llm/roomBudget`'s fixed-cast
+section, `llm/campaignGrounding`'s section header) render those constants, and
+`findScaffoldingEcho` matches the SAME constants — so a reworded sentence
+changes what is sent and what is detected in one edit, and a hand-copied second
+list cannot rot. `llm/generatedTextHygiene.generatedTextScanForFields` is the
+ONE persist-boundary scan and runs BOTH mechanical defect classes over
+reader-visible text (escape debris, and this echo): a hit rejects the artifact's
+finalize step, fails the module part, or throws out of `parseSpine` into the
+spine's existing one-repair turn. It also reports WHICH classes fired
+(`{ issues, reasons }`, docs/17 row 152), and a rejected run step records them —
+which is how the run's own failure sentence names this refusal instead of
+claiming a JSON defect it never was. Never strip the sentence and keep going, never
+a placeholder — this is detection, not a rewrite. Identity fields (`name`,
+`aliases`, `tags`, `id`) are out of scope by construction: they are link targets
+and filter metadata, not prose.
+
+### Autonomy semantics
+
+After each step completes:
+- `manual` → status `awaiting_user`; user may **approve**, **edit** (replaces
+  `userEdit`, used as the step's effective output), **retry** (re-run step,
+  optionally with an extra instruction appended to the prompt), or **cancel**.
+  A schema-rejected output cannot be approved as-is: the user must retry or
+  supply an edit that validates at that step boundary. Encounter verification
+  is the exception — `rejected` there means a valid map exceeded the drift
+  threshold and the user may deliberately continue.
+- `review` → pause (`awaiting_user`) only if the step is `needs_review`
+  (zod failure) — otherwise continue automatically.
+- `auto` → no user in the loop: a step whose output fails zod validation
+  **fails the run** (`status:'failed'` + `errorMessage`, nothing saved) —
+  the engine never falls through a rejected step to finalize placeholder
+  output. Completed runs are reviewable afterwards like any other.
+
+Cancel → `status:'cancelled'`, abort in-flight fetch via AbortSignal, no
+artifact created. Unexpected exception → `status:'failed'`, `errorMessage` set.
+
+### Monster stat sources (M3-B Encounter Smith)
+
+The Encounter Smith's retrieve step runs a second `searchRules` call restricted
+to `chunkTypes: ['statblock']` (the monster-ish nouns of the brief) and presents
+those chunks as a numbered "Stat-block excerpts" list. The draft prompt teaches
+the citation scheme; per monster the model outputs:
+
+- `sourceChunkIndex: <n>` — finalize maps it back to the cited chunk id and
+  persists `{ type: 'rulebook', chunkId }`;
+- a full `statBlock` object (only when no excerpt matched) — persisted as
+  `{ type: 'inline', statBlock }`;
+- neither — name-only `{ type: 'none' }`.
+
+Resolution to displayable stat blocks happens in
+`resolveMonsterEntryWithRepos` (origin badges: "NPC: <name>", "Bestiary p. N",
+"inline"; dangling refs degrade to a visible "missing ref" badge).
+
+### Image personas (M3-A Illustrator)
+
+> **Owner amendment (2026-09-05, c3c021f):** the prompt-draft step no longer
+> makes an LLM call — the chat draft and its one-repair retry are gone; the
+> prompt is assembled deterministically from the artifact's own data. Owner,
+> verbatim: "i thought we ripped that out… I dont want that extra LLM call.
+> Just use the appearance/body."
+
+Steps: `prompt-draft` → `generate` → `pick` (no retrieve — image prompts don't
+use rule excerpts).
+
+1. **prompt-draft** — no LLM call: `buildImagePrompt`
+   (`src/llm/imagePromptDraft.ts`) assembles `{ prompt, negative, styleNotes }`
+   deterministically from the artifact's own data. A non-empty `appearance` is
+   used verbatim behind the system label (`"Pathfinder 2e=>…"`, a run
+   extra-instruction rides on a second line); otherwise the prompt grounds on
+   name + kind, `summary`, and the markdown-stripped `body`
+   ("A \<system\> illustration of \<name\> (\<kind\>)."), with empty
+   `negative`/`styleNotes`. Nothing to ground on (no appearance, summary AND
+   body) is a loud error — never a placeholder prompt (AGENTS rule 1). Pauses
+   like a reviewable step: `manual`/`review`
+   pause at `awaiting_user`; `auto` continues. The UI presents the three fields
+   as editable inputs; continuing stores them as `userEdit: { parsed: … }`
+   (the edit wins over the raw output).
+2. **generate** — one call to `POST /api/v1/images`
+   `{ model: settings.imageModel, prompt, n: RUN_IMAGE_CANDIDATES, output_format: 'webp' }`
+   — ONE since docs/17 row 307 (re-illustrating is the correction path, and two
+   candidates doubled wait and cost for a choice the owner did not need)
+   (negative/styleNotes folded into the prompt text). There is NO image on/off
+   switch any more (docs/17 row 406 — the owner deleted it: asking for an image
+   IS the intent), so the step always runs. Each
+   returned image is stored through the intake pipeline (M3-A §Storage) with
+   `source:'generated'`, prompt and model recorded. No pause.
+3. **pick** — ALWAYS pauses (`awaiting_user`) on every autonomy level. The UI
+   shows candidate thumbnails; the user keeps what the run offered (one
+   candidate by default), and the pick cap is derived from the run's own
+   candidate list. Applying the pick appends
+   kept ids to `targetArtifact.imageIds` (first keep becomes the cover if none
+   set), prunes discarded candidate blobs, and completes the run with
+   `resultArtifactId` = the target artifact.
+
+Runs require `targetArtifactId` (rejected at start otherwise); the run row
+persists it. Review/image personas never create artifacts; only generate
+personas produce one.
+
+## Acceptance criteria
+
+- With a valid key: brief "a goblin alchemist boss for level 3 party" in manual
+  mode pauses after each step, streams tokens live in the panel, and produces
+  an NPC artifact with a parsed stat block on approval of all steps.
+- In auto mode the same brief runs to completion unattended.
+- Invalid API key surfaces a clear error and opens Settings; the run is 'failed'.
+- Reloading the page mid-run: run row shows 'failed' with message
+  "Interrupted by reload" (engine marks running runs failed on app start).
+- Reloading the page mid-MODULE-GENERATION is reconciled the same way and just
+  as loudly (docs/17 row 110): the module row shows 'failed' with
+  `INTERRUPTED_MODULE_GEN_MESSAGE` — the page writing it is gone, finished
+  parts are untouched, unfinished parts are back to pending, press "Resume
+  module generation" — every part slot that was mid-write rewinds to
+  `'pending'`, and that press writes exactly those parts (and re-runs nothing
+  that was already complete). This runs on app start (a discarded tab RELOADS
+  and gets no visibility event at all) and again on the way back into a
+  backgrounded tab, and it never touches a module a live pass — or another tab
+  — owns.
+- A tab that is merely HIDDEN keeps generating; while it is hidden the outcome
+  is reported in the tab title (`Working: <label> — Campaigner`, then
+  `✓ Finished: …` or `⚠ Failed: …`), which is the only surface a backgrounded
+  page has. A user stop reaches no verdict and clears the line.
+- A completed run never keeps a stale failure message: the step write, the
+  completion write, the cancel path and `cancel(runId)` all clear
+  `errorMessage`/`failureKind`, so a 'completed' row cannot still read
+  "Interrupted by reload".

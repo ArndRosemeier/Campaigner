@@ -1,0 +1,1391 @@
+import { readFileSync } from 'node:fs';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { PackMeta } from '@/domain/rulebook';
+import type { RuleChunk } from '@/domain';
+import {
+  PACK_FETCH_CONCURRENCY,
+  PACK_FETCH_FALLBACK_VALID_RATIO,
+  PACK_FETCH_MAX_BYTES,
+  PACK_FETCH_NEWEST_REF,
+  PACK_FETCH_SOURCES,
+  PACK_FETCH_TIMEOUT_MS,
+  clearPackTreeCache,
+  fetchAndImportPack,
+  listPackRecipes,
+  packRefChain,
+  selectCreatureFiles,
+  throttleProgress,
+} from '@/ingest/packFetch';
+import type { PackFetchProgress } from '@/ingest/packFetch';
+import type { PackImportDeps, PackImportProgress } from '@/ingest/packImport';
+
+import { repoFiles } from '../helpers/sourceCode';
+import { baseNpc, folderDoc } from './packs/fixtures';
+
+/**
+ * Pack fetcher tests (16-BESTIARY-FETCH §9): every network response is
+ * mocked — these tests pin the engine's loud failure policy, the provenance
+ * stamp, the curated recipes' pinned refs, and the bounded concurrency. The
+ * adapters themselves stay network-free (asserted in their own test files).
+ */
+
+const PF2E_TREE = {
+  sha: 'tree-sha',
+  truncated: false,
+  tree: [
+    { path: 'packs', type: 'tree' },
+    { path: 'packs/pf2e', type: 'tree' },
+    { path: 'packs/pf2e/npc-gallery', type: 'tree' },
+    { path: 'packs/pf2e/npc-gallery/acolyte-of-nethys.json', type: 'blob' },
+    { path: 'packs/pf2e/npc-gallery/priest-of-pharasma.json', type: 'blob' },
+    // Non-creature content in the pack dir: never fetched.
+    { path: 'packs/pf2e/npc-gallery/_folders.json', type: 'blob' },
+    { path: 'packs/pf2e/npc-gallery/notes.txt', type: 'blob' },
+    // A second pack for the full-list grouping test.
+    { path: 'packs/pf2e/blog-bestiary/raven.json', type: 'blob' },
+    { path: 'packs/pf2e/blog-bestiary/_folders.json', type: 'blob' },
+    // Code outside the pack root: invisible to the fetcher.
+    { path: 'src/module.json', type: 'blob' },
+  ],
+};
+
+function listingResponse(tree: unknown): Response {
+  return new Response(JSON.stringify(tree), { status: 200 });
+}
+
+function creatureResponse(value: unknown, status = 200): Response {
+  return new Response(status === 200 ? JSON.stringify(value) : 'nope', {
+    status,
+    statusText: status === 200 ? 'OK' : 'Not Found',
+  });
+}
+
+/** Routes GitHub listing + raw file URLs to canned responses / errors. */
+function mockFetch(routes: Record<string, Response | Error>): typeof fetch & { calls: string[] } {
+  const calls: string[] = [];
+  const mock = vi.fn((url: string | URL | Request) => {
+    const key = typeof url === 'string' ? url : url instanceof Request ? url.url : url.href;
+    calls.push(key);
+    const route = routes[key];
+    if (route === undefined) throw new Error(`unexpected fetch: ${key}`);
+    if (route instanceof Error) return Promise.reject(route);
+    return Promise.resolve(route);
+  }) as unknown as typeof fetch & { calls: string[] };
+  mock.calls = calls;
+  return mock;
+}
+
+const PINNED_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/v14-dev?recursive=1';
+const HEAD_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/HEAD?recursive=1';
+/** Raw file URL at the NEWEST ref (the chain's first attempt). */
+const RAW = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/pf2e/HEAD/${path}`;
+/** Raw file URL at the pinned VERIFIED ref (the chain's fallback target). */
+const RAW_PINNED = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/pf2e/v14-dev/${path}`;
+
+/** dnd5e listing/raw URLs — the creature and item sources share repo + ref. */
+const DND5E_HEAD_LIST_URL = 'https://api.github.com/repos/foundryvtt/dnd5e/git/trees/HEAD?recursive=1';
+const DND5E_PINNED_LIST_URL = 'https://api.github.com/repos/foundryvtt/dnd5e/git/trees/6.0.x?recursive=1';
+const DND5E_RAW = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/dnd5e/HEAD/${path}`;
+const DND5E_RAW_PINNED = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/dnd5e/6.0.x/${path}`;
+
+type MemoryDeps = PackImportDeps & {
+  created: { title: string; system: string; filename: string }[];
+  persisted: RuleChunk[][];
+  finalized: { id: string; packMeta: PackMeta | null }[];
+  failed: { id: string; message: string }[];
+};
+
+function memoryDeps(): MemoryDeps {
+  const created: { title: string; system: string; filename: string }[] = [];
+  const persisted: RuleChunk[][] = [];
+  const finalized: { id: string; packMeta: PackMeta | null }[] = [];
+  const failed: { id: string; message: string }[] = [];
+  let lastBookId = '';
+  const makeBook = (title: string, status: 'processing' | 'ready', packMeta: PackMeta | null) => ({
+    id: lastBookId,
+    createdAt: 1,
+    updatedAt: 1,
+    title,
+    system: 'pathfinder2e' as const,
+    filename: 'pack.json',
+    pageCount: 0,
+    status,
+    errorMessage: '',
+    origin: 'pack' as const,
+    packMeta,
+  });
+  const deps: MemoryDeps = {
+    createBook: (input) => {
+      created.push(input);
+      lastBookId = crypto.randomUUID();
+      return Promise.resolve(makeBook(input.title, 'processing', null));
+    },
+    persistChunks: (chunks) => {
+      persisted.push(chunks);
+      return Promise.resolve();
+    },
+    finalizeBook: (id, packMeta) => {
+      finalized.push({ id, packMeta });
+      return Promise.resolve(makeBook(id, 'ready', packMeta));
+    },
+    failBook: (id, message) => {
+      failed.push({ id, message });
+      return Promise.resolve();
+    },
+    created,
+    persisted,
+    finalized,
+    failed,
+  };
+  return deps;
+}
+
+beforeEach(() => {
+  clearPackTreeCache();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('pack fetch sources (ratified pins)', () => {
+  it('keeps packFetch the ONLY networked file in src/ingest (directory scan)', () => {
+    // 12-BESTIARY-PACKS §5/§9 as amended by 16-BESTIARY-FETCH: adapters and
+    // the import runner parse bytes; fetching lives exclusively in packFetch.
+    // Scanned with readdir so a NEW file under src/ingest (including packs/)
+    // is covered by the same assertion — no exclusion list to rot.
+    const sources = repoFiles('src/ingest', ['.ts']);
+    expect(sources).toContain('src/ingest/packFetch.ts');
+    const fetchCallers = sources.filter((file) =>
+      /\bfetch\s*\(|fetchFn|globalThis\.fetch/.test(readFileSync(file, 'utf8')),
+    );
+    expect(fetchCallers).toEqual(['src/ingest/packFetch.ts']);
+  });
+
+  it('pins the newest-first chain constants (16 §1.1 amendment)', () => {
+    // Documented constants: the newest ref and the format-drift threshold.
+    expect(PACK_FETCH_NEWEST_REF).toBe('HEAD');
+    expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
+    // Every source's chain: newest (HEAD) first, then its pinned verified ref.
+    // The pf2e family shares v14-dev and the dnd5e pair shares 6.0.x; the item
+    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13), the
+    // journal + conditions + rules-text sources with the rules-text arc
+    // (docs/12 §15).
+    expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
+      ['HEAD', 'v14-dev'],
+      ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
+      ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
+      ['HEAD', 'v14-dev'],
+      ['HEAD', 'v14-dev'],
+    ]);
+  });
+
+  it('pins pf2e to v14-dev and dnd5e to 6.0.x with the verified curated recipes', () => {
+    const pf2e = PACK_FETCH_SOURCES.find((source) => source.adapterId === 'foundry-pf2e');
+    const dnd5e = PACK_FETCH_SOURCES.find((source) => source.adapterId === 'foundry-dnd5e-srd');
+    expect(pf2e?.ref).toBe('v14-dev');
+    expect(pf2e?.owner).toBe('foundryvtt');
+    expect(pf2e?.repo).toBe('pf2e');
+    expect(pf2e?.packRoot).toBe('packs/pf2e');
+    // Verified 2026-09-05 at v14-dev (docs/16 §4): real folder names + counts.
+    expect(pf2e?.curated).toEqual([
+      { id: 'packs/pf2e/pathfinder-monster-core', label: 'Pathfinder Monster Core', creatures: 492 },
+      { id: 'packs/pf2e/pathfinder-monster-core-2', label: 'Pathfinder Monster Core 2', creatures: 446 },
+      { id: 'packs/pf2e/pathfinder-bestiary', label: 'Pathfinder Bestiary', creatures: 166 },
+      { id: 'packs/pf2e/pathfinder-bestiary-2', label: 'Pathfinder Bestiary 2', creatures: 160 },
+      { id: 'packs/pf2e/pathfinder-bestiary-3', label: 'Pathfinder Bestiary 3', creatures: 165 },
+      { id: 'packs/pf2e/pathfinder-npc-core', label: 'Pathfinder NPC Core', creatures: 272 },
+      { id: 'packs/pf2e/npc-gallery', label: 'NPC Gallery', creatures: 6 },
+      { id: 'packs/pf2e/menace-under-otari-bestiary', label: 'Menace under Otari (free starter bestiary)', creatures: 93 },
+    ]);
+    expect(dnd5e?.ref).toBe('6.0.x');
+    // Row 194 widened the creature source to the broad `_source` root so its
+    // OWN adapter can also fetch the spell level folders; packDirs keeps the
+    // advanced listing to exactly the folders that adapter parses.
+    expect(dnd5e?.packRoot).toBe('packs/_source');
+    // `listPackRecipes` groups by the FIRST segment under packRoot, so the
+    // listing granularity is these two folders — the spell LEVEL folders are
+    // reached through the curated `spells` recipe and by the adapter's own
+    // recursive file selection.
+    expect(dnd5e?.packDirs).toEqual(['monsters', 'spells']);
+    // Verified against 6.0.x (trees API, 2026-09-16 sweep): the ten spell
+    // level folders carry 25/50/55/43/32/38/32/21/17/16 = 329 documents.
+    expect(dnd5e?.curated).toEqual([
+      { id: 'packs/_source/monsters', label: 'D&D 5e SRD Monsters', creatures: 337 },
+      { id: 'packs/_source/spells', label: 'D&D 5e SRD Spells', creatures: 329, unit: 'spells' },
+    ]);
+  });
+
+  it('serves the curated list without touching the network', async () => {
+    const fetchFn = mockFetch({});
+    const recipes = await listPackRecipes('foundry-pf2e', { fetchDeps: { fetchFn } });
+    expect(recipes).toHaveLength(8);
+    expect(fetchFn).not.toHaveBeenCalled();
+    await expect(listPackRecipes('foundry-4e', { fetchDeps: { fetchFn } })).rejects.toThrow(
+      'no pack fetch source for adapter "foundry-4e"',
+    );
+  });
+
+  it('selects creature files only (extension filter, `_` metadata docs skipped)', () => {
+    const paths = [
+      'packs/pf2e/npc-gallery/acolyte-of-nethys.json',
+      'packs/pf2e/npc-gallery/_folders.json',
+      'packs/pf2e/npc-gallery/notes.txt',
+      'packs/pf2e/other-pack/ogre.json',
+    ];
+    expect(selectCreatureFiles(['.json'], 'packs/pf2e', 'packs/pf2e/npc-gallery', paths)).toEqual([
+      'packs/pf2e/npc-gallery/acolyte-of-nethys.json',
+    ]);
+  });
+});
+
+describe('journal fetch source foundry-pf2e-journal (docs/12 §15)', () => {
+  /** The whole GM Screen journal IS the pack: one document, 61 pages. */
+  const gmScreenDoc = {
+    _id: 'S55aqwWIzpQRFhcq',
+    name: 'GM Screen',
+    categories: [],
+    pages: [
+      {
+        name: 'Encounter Budget',
+        text: {
+          content:
+            '<table border="1" class="pf2e remaster"><thead><tr style="text-align:right"><th>Difficulty</th>' +
+            '<th>XP Budget</th><th>Character Adjustment</th></tr></thead><tbody><tr><td>Trivial</td>' +
+            '<td>40 or less</td><td>10 or less</td></tr><tr><td>Low</td><td>60</td><td>20</td></tr></tbody></table>' +
+            '<p><em>Section: Running the Game</em><span style="float:right"><em>Pathfinder GM Core pg. 75</em></span></p>',
+        },
+      },
+      {
+        name: 'XP Awards',
+        text: { content: '<p><em>Section: Running the Game</em><span style="float:right"><em>Pathfinder GM Core pg. 56</em></span></p>' },
+      },
+    ],
+  };
+
+  const JOURNAL_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/journals/gm-screen.json', type: 'blob' },
+      { path: 'packs/pf2e/journals/ancestries.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const journalRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(JOURNAL_TREE),
+    [PINNED_LIST_URL]: listingResponse(JOURNAL_TREE),
+    [RAW('packs/pf2e/journals/gm-screen.json')]: creatureResponse(gmScreenDoc),
+    [RAW_PINNED('packs/pf2e/journals/gm-screen.json')]: creatureResponse(gmScreenDoc),
+  });
+
+  it('pins the journal source: shared repo ref, packDirs restriction, page-count recipe', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-journal');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    // The journal source shares the packRoot with the creature/equipment
+    // sources: without packDirs the advanced listing would offer every pack.
+    expect(source?.packDirs).toEqual(['journals']);
+    // Verified 2026-09-07 at v14-dev: gm-screen.json is ONE JournalEntry
+    // document with 61 pages (the brief's "~100" estimate was off — disclosed
+    // in docs/12 §15). The recipe counts PAGES: the volume the user opts into.
+    expect(source?.curated).toEqual([
+      {
+        id: 'packs/pf2e/journals/gm-screen.json',
+        label: 'PF2e GM Screen (Paizo–Foundry partnership; summarizes GM Core)',
+        creatures: 61,
+        unit: 'pages',
+      },
+    ]);
+  });
+
+  it('fetches the single-document journal recipe and imports one section chunk per page', async () => {
+    const fetchFn = mockFetch(journalRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack(
+      'foundry-pf2e-journal',
+      'packs/pf2e/journals/gm-screen.json',
+      { deps, fetchDeps: { fetchFn } },
+    );
+
+    // Curated label becomes the book title; exactly ONE file was downloaded.
+    expect(deps.created[0]?.title).toBe('PF2e GM Screen (Paizo–Foundry partnership; summarizes GM Core)');
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://raw.githubusercontent.com'))).toHaveLength(1);
+    expect(result.imported).toBe(2);
+    expect(result.sectionsImported).toBe(2);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/journals/gm-screen.json',
+    );
+    const chunks = deps.persisted.flat();
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['section', 'section']);
+    expect(chunks[0]?.headingPath).toEqual(['Running the Game', 'Encounter Budget']);
+    expect(chunks[0]?.text).toContain('Trivial | 40 or less | 10 or less');
+    expect(chunks[0]?.text).toContain('Source: Pathfinder GM Core pg. 75');
+  });
+
+  it('restricts the full listing to the journals folder, counted per adapter-parseable file', async () => {
+    const fetchFn = mockFetch(journalRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-journal', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      // The full listing groups by folder and counts FILES (one per journal) —
+      // curated recipes are the ones that carry the page-count volume.
+      { id: 'packs/pf2e/journals', label: 'journals', creatures: 2 },
+    ]);
+  });
+});
+
+describe('conditions fetch source foundry-pf2e-conditions (docs/12 §15)', () => {
+  const blindedDoc = {
+    _id: 'XgEqL1kFApUbl5Z2',
+    name: 'Blinded',
+    type: 'condition',
+    system: {
+      description: { value: "<p>You can't see. All normal terrain is difficult terrain to you.</p>" },
+      traits: { value: [] },
+      publication: { license: 'ORC', remaster: true, title: 'Pathfinder Player Core' },
+    },
+  };
+
+  const CONDITIONS_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/conditions/blinded.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/frightened.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/_folders.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const conditionRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(CONDITIONS_TREE),
+    [PINNED_LIST_URL]: listingResponse(CONDITIONS_TREE),
+    [RAW('packs/pf2e/conditions/blinded.json')]: creatureResponse(blindedDoc),
+    [RAW_PINNED('packs/pf2e/conditions/blinded.json')]: creatureResponse(blindedDoc),
+  });
+
+  it('pins the conditions source: shared repo ref, packDirs restriction, verified count', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-conditions');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    expect(source?.packDirs).toEqual(['conditions']);
+    // Verified 2026-09-07 at v14-dev: 43 flat per-condition documents.
+    expect(source?.curated).toEqual([
+      { id: 'packs/pf2e/conditions', label: 'Conditions', creatures: 43, unit: 'sections' },
+    ]);
+  });
+
+  it('fetches & imports the conditions pack into a section book with provenance', async () => {
+    const fetchFn = mockFetch(conditionRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-conditions', 'packs/pf2e/conditions', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.sectionsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-pf2e-conditions');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/conditions',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('section');
+    expect(chunk?.headingPath).toEqual(['Blinded']);
+    expect(chunk?.text).toContain('Source: Pathfinder Player Core (ORC)');
+  });
+
+  it('restricts the full listing to the conditions folder, `_` metadata docs excluded', async () => {
+    const fetchFn = mockFetch(conditionRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-conditions', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/conditions', label: 'conditions', creatures: 2 },
+    ]);
+  });
+});
+
+describe('rules-corpus fetch source foundry-pf2e-rules (docs/12 §15)', () => {
+  const catFallDoc = {
+    _id: 'feat-id',
+    name: 'Cat Fall',
+    type: 'feat',
+    system: {
+      actionType: { value: 'passive' },
+      actions: { value: null },
+      category: 'skill',
+      description: { value: '<p>Treat falls as 10 feet shorter.</p>' },
+      level: { value: 1 },
+      prerequisites: { value: [{ value: 'trained in Acrobatics' }] },
+      traits: { rarity: 'common', value: ['general', 'skill'] },
+      publication: { license: 'ORC', remaster: true, title: 'Pathfinder Player Core' },
+    },
+  };
+
+  const RULES_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/feats/skill/level-1/cat-fall.json', type: 'blob' },
+      { path: 'packs/pf2e/feats/skill/level-1/_folders.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/blinded.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const rulesRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(RULES_TREE),
+    [PINNED_LIST_URL]: listingResponse(RULES_TREE),
+    [RAW('packs/pf2e/feats/skill/level-1/cat-fall.json')]: creatureResponse(catFallDoc),
+    [RAW_PINNED('packs/pf2e/feats/skill/level-1/cat-fall.json')]: creatureResponse(catFallDoc),
+  });
+
+  it('pins the rules source: shared repo ref, four packDirs, volume-labelled curated recipes', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-rules');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    expect(source?.packDirs).toEqual(['feats', 'spells', 'actions', 'class-features']);
+    // Verified 2026-09-07 via a sparse clone at v14-dev (docs/12 §15).
+    expect(source?.curated).toEqual([
+      {
+        id: 'packs/pf2e/feats',
+        label: 'Feats — ancestry, archetype, class, skill, general, …',
+        creatures: 6284,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/spells',
+        label: 'Spells — ranks, cantrips, focus, rituals',
+        creatures: 1994,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/actions',
+        label: 'Actions — basic, skill, ancestry, class, …',
+        creatures: 574,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/class-features',
+        label: 'Class Features',
+        creatures: 874,
+        unit: 'sections',
+      },
+    ]);
+  });
+
+  it('fetches a nested corpus pack and lands heading paths from the folder walk', async () => {
+    const fetchFn = mockFetch(rulesRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-rules', 'packs/pf2e/feats', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.sectionsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/feats',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('section');
+    // Nested layout: the fetch recurses, the adapter walks the folders.
+    expect(chunk?.headingPath).toEqual(['Feats — Skill', 'Level 1', 'Cat Fall']);
+    expect(chunk?.text).toContain('Source: Pathfinder Player Core (ORC)');
+  });
+
+  it('restricts the full listing to the four corpus folders of the shared packRoot', async () => {
+    const fetchFn = mockFetch(rulesRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-rules', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/feats', label: 'feats', creatures: 1 },
+    ]);
+  });
+});
+
+describe('listPackRecipes (advanced full listing)', () => {
+  it('lists every pack group with creature counts, metadata-only dirs excluded', async () => {
+    const fetchFn = mockFetch({ [PINNED_LIST_URL]: listingResponse(PF2E_TREE) });
+    const recipes = await listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/blog-bestiary', label: 'blog-bestiary', creatures: 1 },
+      { id: 'packs/pf2e/npc-gallery', label: 'npc-gallery', creatures: 2 },
+    ]);
+    // One API call; served from the session cache afterwards.
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails loudly on a rate-limited listing, naming the per-IP limit', async () => {
+    const fetchFn = mockFetch({
+      [PINNED_LIST_URL]: new Response('rate limited', { status: 403 }),
+    });
+    await expect(
+      listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow('60 requests/hour per IP');
+  });
+
+  it('fails loudly on HTTP 429 too, naming the per-IP limit', async () => {
+    // F10: the 429 branch of the same rate-limit handling, alongside the 403
+    // test above — GitHub sends either on an exhausted 60 req/h quota.
+    const fetchFn = mockFetch({
+      [PINNED_LIST_URL]: new Response('too many requests', { status: 429 }),
+    });
+    const action = listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
+    await expect(action).rejects.toThrow('pack listing failed: GitHub API HTTP 429');
+    await expect(action).rejects.toThrow('60 requests/hour per IP');
+  });
+
+  it.each([
+    'packs/pf2e/npc-gallery/../../../etc/passwd.json',
+    'packs\\pf2e\\npc-gallery\\goblin.json',
+    '/etc/shadow',
+  ])('fails loudly on a hostile listing path (%s)', async (hostilePath) => {
+    // F1 (listing integrity): the trees-API listing is hostile input — a `..`
+    // segment, a backslash, or an absolute path fails the WHOLE listing with a
+    // named error quoting the path, never a silent per-path filter.
+    const fetchFn = mockFetch({
+      [PINNED_LIST_URL]: listingResponse({
+        sha: 'tree-sha',
+        truncated: false,
+        tree: [{ path: hostilePath, type: 'blob' }],
+      }),
+    });
+    await expect(
+      listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(
+      `pack listing failed: listing-integrity violation — hostile tree path "${hostilePath}"`,
+    );
+  });
+
+  it('fails loudly with a named error when the listing body is malformed JSON', async () => {
+    // F9: the body parse happens inside the named-error scope — a malformed
+    // listing fails as a named listing failure, not a raw SyntaxError.
+    const fetchFn = mockFetch({
+      [PINNED_LIST_URL]: new Response('{"truncated": false, "tree": [', { status: 200 }),
+    });
+    await expect(
+      listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(/^pack listing failed: could not parse the listing response/);
+  });
+
+  it('fails loudly on a truncated tree instead of silently missing packs', async () => {
+    const fetchFn = mockFetch({
+      [PINNED_LIST_URL]: listingResponse({ truncated: true, tree: [] }),
+    });
+    await expect(
+      listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow('truncated');
+  });
+
+  it('fails loudly on a network error during listing', async () => {
+    const fetchFn = mockFetch({ [PINNED_LIST_URL]: new Error('Failed to fetch') });
+    await expect(
+      listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow('pack listing failed');
+  });
+});
+
+describe('fetchAndImportPack', () => {
+  it('fetches the newest ref and imports a ready book with provenance stamped', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma')),
+    });
+    const deps = memoryDeps();
+    const fetchProgress: string[] = [];
+    const importProgress: PackImportProgress[] = [];
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+      onFetchProgress: (progress) => {
+        fetchProgress.push(`${progress.phase}:${String(progress.done)}/${String(progress.total)}`);
+      },
+      onProgress: (progress) => importProgress.push(progress),
+    });
+
+    expect(result.imported).toBe(2);
+    expect(deps.created[0]?.title).toBe('NPC Gallery'); // curated label becomes the book title
+    expect(result.book.status).toBe('ready');
+    // Only the creature files were requested — metadata/docs never fetched.
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://raw.githubusercontent.com'))).toHaveLength(2);
+    expect(fetchFn.calls.some((url) => url.includes('_folders.json'))).toBe(false);
+    expect(fetchFn.calls.some((url) => url.includes('notes.txt'))).toBe(false);
+
+    // Newest healthy → a SINGLE pass (16 §1.1): one listing call, no fallback
+    // attempt, the pinned verified ref never touched.
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(1);
+    expect(fetchFn.calls.some((url) => url.includes('/v14-dev/'))).toBe(false);
+    expect(result.fetchNote).toBeUndefined();
+
+    // Provenance (16 §1.1 decision 5): the ref ACTUALLY imported + the trail.
+    const meta = result.book.packMeta;
+    expect(meta?.sourceRef).toBe('HEAD');
+    expect(meta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/npc-gallery',
+    );
+    expect(typeof meta?.fetchedAt).toBe('number');
+    expect(meta?.attemptedRefs).toEqual(['HEAD']);
+
+    // Progress: downloading phase counts up to the file total; import phase
+    // keeps its existing shape.
+    expect(fetchProgress[0]).toBe('listing:0/0');
+    expect(fetchProgress.at(-1)).toBe('downloading:2/2');
+    expect(importProgress).toEqual([{ bookId: result.book.id, done: 2, total: 2 }]);
+  });
+
+  it('collects a partial download failure loudly in the report and packMeta', async () => {
+    // 1/2 valid = exactly the threshold → NOT below it (16 §1.1: the fallback
+    // fires only when valid/total < 0.5), so this stays a single newest pass.
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma'), 404),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+    expect(result.imported).toBe(1);
+    expect(result.failed).toEqual([
+      {
+        file: 'npc-gallery/priest-of-pharasma.json',
+        name: '',
+        message: 'download failed: HTTP 404 Not Found',
+      },
+    ]);
+    expect(result.book.packMeta?.entriesFailed).toBe(1);
+    expect(result.book.status).toBe('ready');
+  });
+
+  it('collects a network failure as a named failure entry', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Error('Failed to fetch'),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+    expect(result.failed[0]?.file).toBe('npc-gallery/priest-of-pharasma.json');
+    expect(result.failed[0]?.message).toContain('download failed: Failed to fetch');
+  });
+
+  it('sends an AbortSignal.timeout signal with every raw file fetch', async () => {
+    // F8 hardening wiring: each raw document fetch is bounded by the
+    // documented per-file timeout constant; the listing call keeps its own
+    // headers-only init.
+    const rawSignals: (AbortSignal | null | undefined)[] = [];
+    const fetchFn = vi.fn((url: string | URL, init?: RequestInit) => {
+      const key = typeof url === 'string' ? url : url instanceof Request ? url.url : url.href;
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(PF2E_TREE));
+      rawSignals.push(init?.signal);
+      return Promise.resolve(creatureResponse(baseNpc('Wired Creature')));
+    }) as unknown as typeof fetch;
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps: memoryDeps(),
+      fetchDeps: { fetchFn },
+    });
+    expect(result.imported).toBe(2); // both raw files went through the signal path
+    expect(rawSignals).toHaveLength(2);
+    for (const signal of rawSignals) {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
+    }
+  });
+
+  it('collects a timed-out download as a named failure entry (not a throw)', async () => {
+    // F8: AbortSignal.timeout rejects with a TimeoutError-named error; the
+    // injected stub mimics exactly that rejection shape.
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: Object.assign(
+        new Error('The operation was aborted due to timeout'),
+        { name: 'TimeoutError' },
+      ),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+    expect(result.failed).toEqual([
+      {
+        file: 'npc-gallery/priest-of-pharasma.json',
+        name: '',
+        message: `download failed: timed out after ${String(PACK_FETCH_TIMEOUT_MS)}ms (AbortSignal.timeout)`,
+      },
+    ]);
+    expect(PACK_FETCH_TIMEOUT_MS).toBe(30_000); // documented constant
+    expect(result.imported).toBe(1); // the healthy file still imports
+    expect(result.book.status).toBe('ready');
+  });
+
+  it('collects an oversized download as a named failure entry (not a throw)', async () => {
+    // F8: one creature document is ≪ 1 MB; a body over the documented cap is
+    // a collected per-file failure, and the pack still imports the rest.
+    const oversized = new Uint8Array(PACK_FETCH_MAX_BYTES + 1);
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(oversized, { status: 200 }),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.file).toBe('npc-gallery/priest-of-pharasma.json');
+    expect(result.failed[0]?.message).toContain(
+      `over the ${String(PACK_FETCH_MAX_BYTES)}-byte sanity cap`,
+    );
+    expect(PACK_FETCH_MAX_BYTES).toBe(5 * 1024 * 1024); // documented constant
+    expect(result.imported).toBe(1);
+    expect(deps.finalized).toHaveLength(1);
+  });
+
+  it('imports nothing and throws loudly naming BOTH refs when every attempt yields zero valid entries', async () => {
+    // All-fail edge (16 §1.1): 0 valid on newest AND fallback → all-fail
+    // semantics as today — loud, and NO book was created (the newest attempt
+    // is below threshold, so the verified ref runs too; its documents are
+    // equally unusable).
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(folderDoc()),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(folderDoc()),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(folderDoc()),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(folderDoc()),
+    });
+    const deps = memoryDeps();
+
+    await expect(
+      fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(
+      /pack fetch failed for "NPC Gallery" — no valid entries from any ref in the chain, no pack book was created\. .*newest \(HEAD\): 0\/2 valid.*verified \(v14-dev\): 0\/2 valid.*no valid creature entries/s,
+    );
+    // No book: not created, not failed, not finalized.
+    expect(deps.created).toHaveLength(0);
+    expect(deps.failed).toHaveLength(0);
+    expect(deps.finalized).toHaveLength(0);
+    // Exactly one listing call per attempt (no hidden extra calls).
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
+  });
+
+  it('throws the combined loud error when every download fails on BOTH refs', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc(), 500),
+      [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc(), 500),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc(), 500),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc(), 500),
+    });
+    const deps = memoryDeps();
+
+    await expect(
+      fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(
+      /newest \(HEAD\): 0\/2 valid — all 2 downloads failed.*HTTP 500.*verified \(v14-dev\): 0\/2 valid — all 2 downloads failed/s,
+    );
+    expect(deps.created).toHaveLength(0);
+  });
+
+  it('rejects an unknown pack path before any download', async () => {
+    const fetchFn = mockFetch({ [HEAD_LIST_URL]: listingResponse(PF2E_TREE) });
+    const deps = memoryDeps();
+    await expect(
+      fetchAndImportPack('foundry-pf2e', 'packs/pf2e/not-a-pack', { deps, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow('no creature files found under "packs/pf2e/not-a-pack"');
+    expect(deps.created).toHaveLength(0);
+    // Threshold fallback, NOT any-error (16 §1.1): an empty selection is a
+    // loud configuration error — the verified ref's listing is never tried.
+    expect(fetchFn.calls.some((url) => url.includes('/v14-dev/'))).toBe(false);
+  });
+
+  it('selects and fetches creature files through nested book-N layouts (AP bestiaries)', async () => {
+    // F10 / docs/16 §4: AP bestiaries nest further, e.g.
+    // packs/pf2e/gatewalkers-bestiary/book-1-.../x.json — the recipe names the
+    // PACK, selection recurses through the nested layout, the raw URLs keep
+    // the nested path, and the report/filenames stay relative to the pack dir.
+    const nestedTree = {
+      sha: 'tree-sha',
+      truncated: false,
+      tree: [
+        { path: 'packs/pf2e/gatewalkers-bestiary/book-1-hellknight-hill/_folders.json', type: 'blob' },
+        { path: 'packs/pf2e/gatewalkers-bestiary/book-1-hellknight-hill/deathcap-ambusher.json', type: 'blob' },
+        { path: 'packs/pf2e/gatewalkers-bestiary/book-2-spire-of-xibalan/cinder-crab.json', type: 'blob' },
+      ],
+    };
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(nestedTree),
+      [RAW('packs/pf2e/gatewalkers-bestiary/book-1-hellknight-hill/deathcap-ambusher.json')]: creatureResponse(baseNpc('Deathcap Ambusher')),
+      [RAW('packs/pf2e/gatewalkers-bestiary/book-2-spire-of-xibalan/cinder-crab.json')]: creatureResponse(baseNpc('Cinder Crab')),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/gatewalkers-bestiary', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+    expect(result.imported).toBe(2);
+    expect(deps.persisted[0]?.map((chunk) => chunk.headingPath[0])).toEqual([
+      'Deathcap Ambusher',
+      'Cinder Crab',
+    ]);
+    // Non-curated recipe: the book title falls back to the pack dir name.
+    expect(deps.created[0]?.title).toBe('gatewalkers-bestiary');
+    // The metadata doc inside the nested book dir was never fetched.
+    expect(fetchFn.calls.some((url) => url.includes('_folders.json'))).toBe(false);
+    // Filenames in the parse inputs keep the nested path relative to the pack.
+    expect(deps.persisted[0]?.every((chunk) => chunk.bookId === result.book.id)).toBe(true);
+  });
+
+  it('bounds download concurrency with the shared pool util', async () => {
+    const fileCount = 6;
+    const tree = {
+      sha: 'tree-sha',
+      truncated: false,
+      tree: Array.from({ length: fileCount }, (_, index) => ({
+        path: `packs/pf2e/npc-gallery/creature-${String(index)}.json`,
+        type: 'blob',
+      })),
+    };
+    let active = 0;
+    let maxActive = 0;
+    const gates: (() => void)[] = [];
+    const fetchFn = vi.fn((url: string | URL) => {
+      const key = String(url);
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(tree));
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<Response>((resolve) => {
+        gates.push(() => {
+          active -= 1;
+          resolve(creatureResponse(baseNpc(`Creature ${key.at(-1)}`)));
+        });
+      });
+    });
+
+    const action = fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps: memoryDeps(),
+      fetchDeps: { fetchFn: fetchFn as unknown as typeof fetch },
+    });
+    // A macrotask tick flushes every pending microtask hop of the pool.
+    const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    // Wait until the pool has started as many downloads as it may run at once…
+    for (let ticks = 0; gates.length < PACK_FETCH_CONCURRENCY && ticks < 100; ticks += 1) {
+      await tick();
+    }
+    expect(gates).toHaveLength(PACK_FETCH_CONCURRENCY); // exactly the bound, not fileCount
+    expect(maxActive).toBeLessThanOrEqual(PACK_FETCH_CONCURRENCY);
+    for (const gate of gates.splice(0)) gate();
+    // …then keep releasing as the pool starts the remaining files.
+    for (let ticks = 0; gates.length < fileCount - PACK_FETCH_CONCURRENCY && ticks < 100; ticks += 1) {
+      await tick();
+    }
+    for (const gate of gates.splice(0)) gate();
+    const result = await action;
+    expect(result.imported).toBe(fileCount);
+    expect(maxActive).toBe(PACK_FETCH_CONCURRENCY); // parallel, but never above the bound
+  }, 15000);
+});
+
+describe('newest-first ref chain with verified-ref fallback (16 §1.1 amendment)', () => {
+  /** Three-creature tree so ratios land strictly below the 0.5 threshold. */
+  const TREE_3 = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/npc-gallery/a.json', type: 'blob' },
+      { path: 'packs/pf2e/npc-gallery/b.json', type: 'blob' },
+      { path: 'packs/pf2e/npc-gallery/c.json', type: 'blob' },
+    ],
+  };
+  const PATHS = ['a.json', 'b.json', 'c.json'].map((name) => `packs/pf2e/npc-gallery/${name}`);
+  const routes = (head: (path: string) => Response | Error, pinned: (path: string) => Response | Error) => ({
+    [HEAD_LIST_URL]: listingResponse(TREE_3),
+    [PINNED_LIST_URL]: listingResponse(TREE_3),
+    ...Object.fromEntries(PATHS.map((path) => [RAW(path), head(path)])),
+    ...Object.fromEntries(PATHS.map((path) => [RAW_PINNED(path), pinned(path)])),
+  });
+
+  it('falls back to the verified snapshot when the newest ref imports below the threshold, loudly', async () => {
+    // Format drift (the v14-dev-moved-under-us failure class): HEAD's documents
+    // parse to NOTHING (0/3 < 0.5) → the verified ref runs too and wins.
+    const fetchFn = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(3);
+    expect(result.book.status).toBe('ready');
+    // Provenance stamps the ref ACTUALLY imported + the attempt trail.
+    expect(result.book.packMeta?.sourceRef).toBe('v14-dev');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+    );
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    // Loud on fallback: the note names BOTH attempts.
+    expect(result.fetchNote).toBe(
+      'newest (HEAD): 0/3 valid — format drift suspected; imported the verified snapshot (v14-dev) instead: 3/3',
+    );
+    // Exactly one listing call per attempt (the per-ref cache adds no extras).
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
+  });
+
+  it('keeps the newest import when it is below the threshold but still beats the verified ref', async () => {
+    const fetchFn = mockFetch(
+      routes(
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Head Acolyte')) : creatureResponse(folderDoc())),
+        () => creatureResponse(folderDoc()),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    // 1/3 < 0.5 → the verified attempt ran; 1 > 0 → newest wins the comparison.
+    expect(result.imported).toBe(1);
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    expect(result.fetchNote).toBe(
+      'newest (HEAD): 1/3 valid — below the 0.5 valid-entry threshold (format drift suspected); ' +
+        'the verified snapshot (v14-dev) yielded 0/3 — kept the newest ref\'s import: 1/3',
+    );
+  });
+
+  it('breaks a deterministic tie toward the newest ref', async () => {
+    // Equal valid counts (1/3 vs 1/3) → freshness wins: newest is imported.
+    const fetchFn = mockFetch(
+      routes(
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Head Acolyte')) : creatureResponse(folderDoc())),
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Verified Acolyte')) : creatureResponse(folderDoc())),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(deps.persisted[0]?.[0]?.headingPath[0]).toBe('Head Acolyte');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    expect(result.fetchNote).toContain('kept the newest ref\'s import: 1/3');
+  });
+
+  it('lists and imports the verified ref when the newest listing fails, and says so', async () => {
+    // Decision 4: a named error on the newest ref's trees listing (rate limit
+    // here) moves the chain to the verified ref's listing.
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: new Response('rate limited', { status: 403 }),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma')),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(2);
+    expect(result.book.packMeta?.sourceRef).toBe('v14-dev');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    // Loud on fallback: the note names the newest listing's cause AND both refs.
+    expect(result.fetchNote).toContain('newest (HEAD) listing failed (pack listing failed: GitHub API HTTP 403');
+    expect(result.fetchNote).toContain('60 requests/hour per IP');
+    expect(result.fetchNote).toContain(
+      '— listed and imported the verified snapshot (v14-dev) instead: 2/2 valid',
+    );
+  });
+
+  it('throws the combined loud listing error when BOTH refs fail to list', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: new Error('Failed to fetch'),
+      [PINNED_LIST_URL]: new Response('too many requests', { status: 429 }),
+    });
+    const deps = memoryDeps();
+
+    await expect(
+      fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(
+      /pack listing failed for "NPC Gallery" — no pack book was created\. newest \(HEAD\): pack listing failed: could not reach api\.github\.com — Failed to fetch; verified \(v14-dev\): pack listing failed: GitHub API HTTP 429/s,
+    );
+    expect(deps.created).toHaveLength(0);
+  });
+
+  it('serves repeat fetches from the per-ref listing cache — one call per attempt, no hidden extras', async () => {
+    const deps = memoryDeps();
+
+    // First fetch: one listing call per attempt of the chain.
+    const first = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn: first } });
+    expect(first.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
+
+    // A second full fetch re-uses BOTH cached listings — zero api.github.com
+    // calls — and still re-runs the raw GETs of each attempt.
+    const second = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn: second } });
+    expect(second.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(0);
+    expect(second.calls.filter((url) => url.startsWith('https://raw.githubusercontent.com'))).toHaveLength(6);
+  });
+});
+
+describe('throttleProgress (~10 Hz progress, F7)', () => {
+  it('emits immediately, coalesces bursts, and always flushes the final update', async () => {
+    vi.useFakeTimers();
+    try {
+      const emitted: number[] = [];
+      const throttle = throttleProgress((value: number) => emitted.push(value), 100);
+
+      throttle.send(1); // leading edge — immediate
+      expect(emitted).toEqual([1]);
+
+      throttle.send(2); // inside the window — coalesced into one trailing emit
+      throttle.send(3);
+      expect(emitted).toEqual([1]);
+
+      await vi.advanceTimersByTimeAsync(100); // trailing edge emits the NEWEST value
+      expect(emitted).toEqual([1, 3]);
+
+      throttle.send(4); // inside the new window — coalesced again
+      expect(emitted).toEqual([1, 3]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(emitted).toEqual([1, 3, 4]);
+
+      throttle.send(5); // coalesced…
+      throttle.flush(); // …but the FINAL update always flushes immediately
+      expect(emitted).toEqual([1, 3, 4, 5]);
+
+      throttle.flush(); // nothing held — no duplicate emit
+      expect(emitted).toEqual([1, 3, 4, 5]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the last per-file progress visible through fetchAndImportPack (final flush)', async () => {
+    // Integration half of F7: the throttled download phase still ends with
+    // done === total (pinned end-to-end in the provenance test above), and a
+    // 100-file burst cannot emit more than ~1 update per throttle window.
+    const fileCount = 20;
+    const tree = {
+      sha: 'tree-sha',
+      truncated: false,
+      tree: Array.from({ length: fileCount }, (_, index) => ({
+        path: `packs/pf2e/npc-gallery/creature-${String(index)}.json`,
+        type: 'blob',
+      })),
+    };
+    const fetchFn = vi.fn((url: string | URL) => {
+      const key = String(url);
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(tree));
+      return Promise.resolve(creatureResponse(baseNpc(`Creature ${key.at(-1)}`)));
+    }) as unknown as typeof fetch;
+
+    const updates: PackFetchProgress[] = [];
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps: memoryDeps(),
+      fetchDeps: { fetchFn },
+      onFetchProgress: (progress) => updates.push({ ...progress }),
+    });
+    expect(result.imported).toBe(fileCount);
+    // First update names the listing; the LAST update is the flushed final one.
+    expect(updates[0]?.phase).toBe('listing');
+    const downloading = updates.filter((progress) => progress.phase === 'downloading');
+    expect(downloading.at(-1)?.done).toBe(fileCount);
+    expect(downloading.at(-1)?.total).toBe(fileCount);
+    // Throttled: 20 files inside one window cannot produce 20 UI updates.
+    expect(downloading.length).toBeLessThan(fileCount);
+  });
+});
+
+// --- Item source (12-BESTIARY-PACKS §13): foundry-pf2e-equipment ---------------
+
+describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §13)', () => {
+  /** A minimal real-shaped pf2e equipment document (Torch / Arrows class). */
+  function itemDoc(name: string, coin: Record<string, number>, per?: number): Record<string, unknown> {
+    return {
+      _id: `id-${name}`,
+      name,
+      type: 'equipment',
+      img: null,
+      system: {
+        level: { value: 0 },
+        price: per === undefined ? { value: coin } : { value: coin, per },
+        traits: { value: [], rarity: 'common' },
+        description: { value: `<p>${name} description.</p>` },
+        publication: { title: 'GM Core', license: 'OGL' },
+      },
+    };
+  }
+
+  const ITEM_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/equipment/torch.json', type: 'blob' },
+      { path: 'packs/pf2e/equipment/arrows.json', type: 'blob' },
+      { path: 'packs/pf2e/equipment/_folders.json', type: 'blob' },
+      // Other packs of the shared packRoot: fetchable only through their own source.
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const itemRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(ITEM_TREE),
+    [PINNED_LIST_URL]: listingResponse(ITEM_TREE),
+    [RAW('packs/pf2e/equipment/torch.json')]: creatureResponse(itemDoc('Torch', { cp: 1 })),
+    [RAW('packs/pf2e/equipment/arrows.json')]: creatureResponse(itemDoc('Arrows', { sp: 1 }, 10)),
+    [RAW_PINNED('packs/pf2e/equipment/torch.json')]: creatureResponse(itemDoc('Torch', { cp: 1 })),
+    [RAW_PINNED('packs/pf2e/equipment/arrows.json')]: creatureResponse(itemDoc('Arrows', { sp: 1 }, 10)),
+  });
+
+  it('pins the equipment source: shared repo ref, packDirs restriction, verified curated count', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-equipment');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    // The pf2e equipment source shares the packRoot with the creature source:
+    // without packDirs the advanced listing would offer all 98 bestiary packs.
+    expect(source?.packDirs).toEqual(['equipment']);
+    expect(source?.curated).toEqual([
+      { id: 'packs/pf2e/equipment', label: 'Pathfinder 2e Equipment', creatures: 5707, unit: 'items' },
+    ]);
+  });
+
+  it('fetches & imports the equipment pack into an item book with provenance', async () => {
+    const fetchFn = mockFetch(itemRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-equipment', 'packs/pf2e/equipment', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(2);
+    expect(result.itemsImported).toBe(2);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-pf2e-equipment');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/equipment',
+    );
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD']);
+    const chunks = deps.persisted.flat();
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['item', 'item']);
+    expect(chunks[0]?.itemData?.priceDisplay).toBe('1 cp');
+    expect(chunks[1]?.itemData?.priceDisplay).toBe('1 sp (per 10)');
+  });
+
+  it('restricts the full listing to packDirs — the bestiary packs never appear', async () => {
+    const fetchFn = mockFetch(itemRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-equipment', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/equipment', label: 'equipment', creatures: 2 },
+    ]);
+  });
+
+  it('keeps creature sources unrestricted: their full listing is unchanged', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(ITEM_TREE),
+      [PINNED_LIST_URL]: listingResponse(ITEM_TREE),
+    });
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
+    // The same tree lists EVERY .json-bearing folder for the creature source —
+    // packDirs only scopes the sources that declare it. (The equipment folder
+    // was always listed here; the item source is the one that narrows.)
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/pf2e/equipment',
+      'packs/pf2e/pathfinder-monster-core',
+    ]);
+  });
+});
+
+describe('item fetch source foundry-dnd5e-equipment (12-BESTIARY-PACKS §13)', () => {
+  /** A minimal real-shaped dnd5e item document (Candle / Chicken class). */
+  function itemDoc(name: string, value: number, denomination: string): Record<string, unknown> {
+    return {
+      _id: `id-${name}`,
+      name,
+      type: 'loot',
+      ownership: { default: 0 },
+      system: {
+        description: { value: `<p>${name} description.</p>` },
+        price: { value, denomination },
+        rarity: '',
+        source: { custom: '', rules: '2014' },
+        quantity: 1,
+      },
+    };
+  }
+
+  const D5_ITEM_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/_source/equipment24/adventuring-gear/candle.yml', type: 'blob' },
+      { path: 'packs/_source/tradegoods/chicken.yml', type: 'blob' },
+      { path: 'packs/_source/tradegoods/_folder.yml', type: 'blob' },
+      // A monsters folder of the shared packRoot: fetchable only through the
+      // creature source.
+      { path: 'packs/_source/monsters/aberration/gibbering-mouther.yml', type: 'blob' },
+    ],
+  };
+  const d5ItemRoutes = () => ({
+    [DND5E_HEAD_LIST_URL]: listingResponse(D5_ITEM_TREE),
+    [DND5E_PINNED_LIST_URL]: listingResponse(D5_ITEM_TREE),
+    [DND5E_RAW('packs/_source/equipment24/adventuring-gear/candle.yml')]: creatureResponse(itemDoc('Candle', 1, 'cp')),
+    [DND5E_RAW('packs/_source/tradegoods/chicken.yml')]: creatureResponse(itemDoc('Chicken', 2, 'cp')),
+    [DND5E_RAW_PINNED('packs/_source/equipment24/adventuring-gear/candle.yml')]: creatureResponse(itemDoc('Candle', 1, 'cp')),
+    [DND5E_RAW_PINNED('packs/_source/tradegoods/chicken.yml')]: creatureResponse(itemDoc('Chicken', 2, 'cp')),
+  });
+
+  it('pins the equipment source: broad packRoot, three packDirs, verified curated counts', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-dnd5e-equipment');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('dnd5e');
+    expect(source?.ref).toBe('6.0.x');
+    expect(source?.packRoot).toBe('packs/_source');
+    // The dnd5e item folders sit under the broad _source root: without
+    // packDirs the advanced listing would offer every monsters/creatureType
+    // subfolder of the creature source.
+    expect(source?.packDirs).toEqual(['equipment24', 'items', 'tradegoods']);
+    // Counts verified against 6.0.x with the trees API (2026-09-07 sweep).
+    expect(source?.curated).toEqual([
+      { id: 'packs/_source/equipment24', label: 'D&D 5e Equipment (2024 rules)', creatures: 679, unit: 'items' },
+      { id: 'packs/_source/items', label: 'D&D 5e Items (2014 rules)', creatures: 889, unit: 'items' },
+      { id: 'packs/_source/tradegoods', label: 'D&D 5e Trade Goods', creatures: 23, unit: 'items' },
+    ]);
+  });
+
+  it('fetches & imports a tradegoods pack into an item book with provenance', async () => {
+    const fetchFn = mockFetch(d5ItemRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-dnd5e-equipment', 'packs/_source/tradegoods', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.itemsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-dnd5e-equipment');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/dnd5e/tree/HEAD/packs/_source/tradegoods',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('item');
+    expect(chunk?.itemData?.priceDisplay).toBe('2 cp');
+    expect(chunk?.itemData?.rulesEdition).toBe('2014');
+  });
+
+  it('restricts the full listing to packDirs across the broad _source root', async () => {
+    const fetchFn = mockFetch(d5ItemRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-dnd5e-equipment', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/_source/equipment24',
+      'packs/_source/tradegoods',
+    ]);
+  });
+
+  it('restricts the dnd5e creature source listing to the monster and spell folders (row 194)', async () => {
+    // The creature source now shares the broad `_source` root with the item
+    // and spell folders: packDirs keeps the advanced listing to `monsters` and
+    // `spells` only, so the equipment/item folders are never offered to an
+    // adapter that cannot parse them, while the spells folder IS offered.
+    const mixedTree = {
+      sha: 'tree-sha',
+      truncated: false,
+      tree: [
+        { path: 'packs/_source/monsters/aberration/gibbering-mouther.yml', type: 'blob' },
+        { path: 'packs/_source/spells/cantrip/fire-bolt.yml', type: 'blob' },
+        { path: 'packs/_source/spells/3rd-level/fireball.yml', type: 'blob' },
+        { path: 'packs/_source/equipment24/adventuring-gear/candle.yml', type: 'blob' },
+        { path: 'packs/_source/tradegoods/chicken.yml', type: 'blob' },
+      ],
+    };
+    const fetchFn = mockFetch({
+      [DND5E_HEAD_LIST_URL]: listingResponse(mixedTree),
+      [DND5E_PINNED_LIST_URL]: listingResponse(mixedTree),
+    });
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-dnd5e-srd', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/_source/monsters',
+      'packs/_source/spells',
+    ]);
+    // The equipment folders are the item adapter's, not this one's.
+    expect(recipes.map((recipe) => recipe.id)).not.toContain('packs/_source/equipment24');
+  });
+});

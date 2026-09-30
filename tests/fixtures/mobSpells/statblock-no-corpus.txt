@@ -1,0 +1,7 @@
+Fill the StatBlock for "Grix" at level 5, grounded in the rule excerpts.
+
+a goblin alchemist boss for a level 5 party
+
+No rule excerpts available.
+
+Reply with ONLY a JSON object matching this COMPLETE schema: { "system": "pathfinder2e", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), "size": string, "creatureType": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "abilities": d20 ability SCORES — in EVERY system, Pathfinder 2e included: write the SCORE, never the printed modifier, so a Pathfinder 2e "Str +2" is written 14 (score = 10 + 2 × the printed modifier) and an ability value NEVER carries a sign — the keys are { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "saves": string, "skills": string, "senses": string, "languages": string, "traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], "reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], "extras": Record<string,string> }. Include every field; use empty strings or arrays only when a section truly does not apply.

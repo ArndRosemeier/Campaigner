@@ -1,0 +1,30 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/tradegoods/chicken.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Chicken
+system:
+  description:
+    value: <p>The source of omelettes and chicken wings, the average adult chicken weighs between 5 and 10 pounds.</p>
+    chat: ""
+  price:
+    value: 2
+    denomination: cp
+  rarity: ""
+  source:
+    custom: ""
+    book: ""
+    page: ""
+    license: CC-BY-4.0
+    rules: "2014"
+  properties: []
+  type:
+    value: trade
+    subtype: ""
+  quantity: 1
+  weight:
+    value: 8
+    units: lb
+_id: l1YRv9sdhQPaSQop
+type: loot
+ownership:
+  default: 0

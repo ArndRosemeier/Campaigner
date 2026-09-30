@@ -1,0 +1,774 @@
+import type {
+  AnyArtifact,
+  CreatureIdentity,
+  CreatureRef,
+  Id,
+  NpcArtifact,
+  Rulebook,
+  RuleChunk,
+  SeedFighter,
+  StatBlock,
+  WikiLinkCreature,
+} from '@/domain';
+import {
+  chunkIdOfOriginToken,
+  contentCreatureIdentity,
+  contentCreatureKey,
+  creatureIdentityForCitation,
+  creatureRefIsEmpty,
+  isCastCreatureNpc,
+  libraryCreatureKey,
+  moduleTagFor,
+  npcCreatureIdentity,
+  npcOriginToken,
+  sameAliasName,
+} from '@/domain';
+import { libraryCreaturePool } from '@/domain/libraryCreature';
+import { copyCreatureStats, creatureCopyRefusal } from '@/domain/libraryCopy';
+import type { GameSystem } from '@/domain/gameSystem';
+import { setLibraryCreaturePool } from '@/lib/wikilinks';
+import {
+  creatureCitationName,
+  creatureOriginLabel,
+  derivedStatOrigin,
+  missingCreatureOrigin,
+  resolveCreatureChunk,
+  type CreatureCitation,
+  type MonsterLookups,
+} from '@/domain/encounterResolve';
+import {
+  createArtifact,
+  stampModuleOwnership,
+  getAnyArtifact,
+  listArtifactsByCampaign,
+  type RevisionMeta,
+} from '@/db/artifactRepo';
+import { getChunksByContentHash, listChunksByType } from '@/db/chunkRepo';
+import { spellIndexLookup } from '@/db/spellRepo';
+import {
+  creatureImageIdsByKey,
+  getCreatureImageRow,
+  insertCreatureImageRow,
+} from '@/db/creatureImages';
+import { db } from '@/db/db';
+import { deleteImageIfUnreferenced } from '@/db/imageRepo';
+import {
+  canonicalCreatureName,
+  cloneCachedPortraitToArtifact,
+  getMobPortraitCacheEntry,
+  isCanonicalCitation,
+} from '@/db/mobPortraitCache';
+
+/**
+ * THE creature layer (owner-ratified core-mob arc; docs/18 §2). One module
+ * owns every question top code is allowed to ask about a creature:
+ *
+ *  1. `resolveCreatureCitation` — "what are this creature's numbers, and where
+ *     did they come from?"
+ *  2. `creatureCoverImageId` — "which image is this creature's look?"
+ *  3. `setCreatureCover` — the ONE write of that look.
+ *  4. `castCreatureAsNpc` — the Aunt Agatha path (docs/11 D4): the ONLY way an
+ *     authored NPC is born out of a creature, and the only function that
+ *     touches the portrait cache on behalf of an artifact.
+ *
+ * Layering (the owner's explicit ask): a UI panel passes a CITATION and gets
+ * numbers, a name and an image id back. It never sees a chunk id, a content
+ * hash or a portrait key. `setCreatureCover` takes a creature KEY and an image
+ * id and NO artifact parameter at all, so "does this creature need an artifact
+ * for its portrait?" cannot even be typed.
+ *
+ * The library tier is READ-ONLY structurally (docs/11 D8): nothing here writes
+ * a chunk or a creature. The bestiary-creature refusal of the previous arc is
+ * gone with the rows it guarded (docs/17 row 106) — not reimplemented, because
+ * there is no writer to refuse.
+ */
+
+/** The repo-wired library lookups (shared with `db/monsterResolve`). */
+export function creatureLookups(): MonsterLookups {
+  return {
+    getArtifact: (id: Id) => getAnyArtifact(id),
+    getChunk: (id: Id) => db.chunks.get(id),
+    getChunkByContentHash: async (contentHash: string) => {
+      // Several local chunks may share one hash (re-ingests): prefer the one
+      // that actually carries stats, mirroring the import verdict's L0 rule
+      // (a hash hit on a statless chunk never satisfies).
+      const rows = await getChunksByContentHash(contentHash);
+      return rows.find((row) => row.statBlock !== null) ?? rows[0];
+    },
+    getRulebook: (bookId: Id) => db.rulebooks.get(bookId),
+  };
+}
+
+/**
+ * A resolved library creature: the numbers, the disclosed origin, and the
+ * IDENTITY every portrait answer keys on. `chunk` is the row that ANSWERED
+ * (never necessarily the row the citation named — the content-hash fallback
+ * may find a different id for the same bytes, and the identity follows the
+ * RESOLVED row so a healed citation shares the direct citation's portrait).
+ */
+export interface ResolvedCreatureListing {
+  /** The creature's own name: the citation's stamped name, else the fallback. */
+  name: string;
+  statBlock: StatBlock | null;
+  /** The disclosed origin label, exactly what a GM sees. */
+  origin: string;
+  identity: CreatureIdentity;
+  /** The resolved library chunk, or null when the library lacks it. */
+  chunk: RuleChunk | null;
+  /** The resolved chunk's id, or null. */
+  chunkId: Id | null;
+  /** True when the citing name matches the chunk's canonical creature name —
+   * the one generation that may populate the SHARED canonical slot. */
+  canonical: boolean;
+}
+
+/**
+ * Resolves one library creature citation end to end. `fallbackName` is the
+ * name the caller knows the creature by (the roster entry, the authored NPC)
+ * and is used only where the citation stamps no name of its own.
+ *
+ * A citation carrying no library pointer at all is a loud error, never a
+ * silent empty resolution (AGENTS rule 1): nothing can resolve it, and calling
+ * that "missing" would hide a write-side bug behind a read-side label.
+ */
+export async function resolveCreatureCitation(
+  citation: CreatureCitation,
+  fallbackName: string,
+): Promise<ResolvedCreatureListing> {
+  if (creatureRefIsEmpty(citation)) {
+    throw new Error(
+      `creature citation for "${fallbackName}" carries neither a chunk id nor a content hash — nothing can resolve it`,
+    );
+  }
+  const lookups = creatureLookups();
+  const name = creatureCitationName(citation, fallbackName);
+  const chunk = await resolveCreatureChunk(citation, lookups);
+  if (chunk === undefined) {
+    return {
+      name,
+      statBlock: null,
+      origin: missingCreatureOrigin(name),
+      // No resolved row: the key still follows the citation's own uuid when it
+      // has one (so a re-install that restores the row heals every portrait at
+      // once). A citation with only a content hash has no library identity to
+      // key on, so its portrait would be the content one — which is why the
+      // label above is a named `missing ref` rather than a silent absence.
+      identity:
+        citation.chunkId === undefined
+          ? contentCreatureIdentity(name, undefined)
+          : creatureIdentityForCitation(citation, citation.chunkId),
+      chunk: null,
+      chunkId: null,
+      canonical: false,
+    };
+  }
+  const identity = creatureIdentityForCitation(citation, chunk.id);
+  const canonicalName = canonicalCreatureName(chunk);
+  return {
+    name,
+    statBlock: chunk.statBlock ?? null,
+    origin:
+      chunk.statBlock == null
+        ? missingCreatureOrigin(name)
+        : await creatureOriginLabel(chunk, name, lookups),
+    identity,
+    chunk,
+    chunkId: chunk.id,
+    canonical: canonicalName !== null && isCanonicalCitation(canonicalName, name),
+  };
+}
+
+/** The identity of a creature with no library row behind it — an invented mob
+ * (docs/11 D5). The KEY is the identity; nothing is written anywhere. */
+export function inventedCreatureIdentity(
+  name: string,
+  statBlock: StatBlock | null,
+): CreatureIdentity {
+  return contentCreatureIdentity(name, statBlock);
+}
+
+/**
+ * Do these two creature references name the SAME creature? An identity is a
+ * chunk uuid when one is known and the content hash otherwise (`domain/creature`
+ * — hash fallback tried FIRST only where the uuid is absent, docs/11 D9), so
+ * two references agree when their known keys agree and disagree only when both
+ * carry a key and the keys differ. A reference with NEITHER key is empty and
+ * matches nothing.
+ */
+export function creatureRefIdentical(
+  left: CreatureRef | undefined,
+  right: CreatureRef | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return false;
+  if (left.chunkId !== undefined && right.chunkId !== undefined) {
+    return left.chunkId === right.chunkId;
+  }
+  if (left.contentHash !== undefined && right.contentHash !== undefined) {
+    return left.contentHash === right.contentHash;
+  }
+  // One side knows only the name: no identity claim can be made from it, so the
+  // comparison refuses rather than guessing (never a silent fallback).
+  return false;
+}
+
+/**
+ * ONE library creature of the pool below — the row-derived facts every caller
+ * of `listLibraryCreatures` needs. `statBlock` is the creature's OWN validated
+ * block, carried because the chunk row already holds it and because a prompt
+ * window that must ORDER the library by level has nowhere else to read it from
+ * without a second chunk read (docs/17 row 114).
+ *
+ * `bookId` is the same kind of carried row fact (docs/17 row 163): the book a
+ * creature's chunk belongs to is ON the chunk row, so the window that prints
+ * each creature's pack title reads it here rather than re-reading the chunk it
+ * just pooled. It is an internal row pointer, never a title — the title is the
+ * book's own (and a book row can be missing), so nothing but a real read of
+ * `db/rulebookRepo.getRulebook` may produce one.
+ */
+export interface LibraryCreature {
+  chunkId: Id;
+  name: string;
+  contentHash: string;
+  headingPath: readonly string[];
+  statBlock: StatBlock | null;
+  bookId: Id;
+}
+
+/**
+ * THE library creature pool (docs/11 D10): every stat-block chunk as a DERIVED
+ * creature — its identity (the chunk) and the library's own spelling of its
+ * name (the last non-empty `headingPath` element, `canonicalCreatureName`'s one
+ * rule). Pure read, computed, never a row: nothing here writes, and no artifact
+ * is involved.
+ *
+ * This is what makes a module's `[[Zombie]]` resolve once no mob artifact stands
+ * in for the creature — the mention reads as a CITATION of a library creature,
+ * which is exactly what it is. Two chunks carrying the same name yield one entry
+ * each (a name is not an identity); the FIRST wins for the name-addressed
+ * wiki-link lookup, which is why the list is ordered by name then chunk id (a
+ * stable answer rather than a race).
+ *
+ * It is ALSO the population of the module creator's bestiary window
+ * (`llm/creatorRoster`, docs/17 row 114) and therefore the ONE source of truth
+ * for "which creature names may a generated module ask to cast": the window
+ * lists these names and `features/modules/entity-batch` resolves against them,
+ * so the vocabulary a prompt shows and the lookup that judges the reply cannot
+ * disagree. Deliberately NOT filtered by book origin — a creature imported from
+ * an ordinary rulebook is as castable as a pack one. Since row 163 the window
+ * also prints each creature's pack title beside its name, read from the carried
+ * `bookId` — the pool stays a pure read of the chunk table, and the title is the
+ * book's own row.
+ *
+ * **`system` SCOPES THE POOL TO THE CAMPAIGN'S GAME SYSTEM (docs/17 row 207).**
+ * A generation read that offers or resolves cross-system content is a real
+ * defect: a Pathfinder 2e module grounded in a dnd5e rules book, or cast from a
+ * dnd5e stat block, is confidently wrong. A chunk does not carry a system of its
+ * own, so the OWNING BOOK decides (`bookId`): the books the pool names are read
+ * ONCE here and indexed by id — never one read per creature — and a chunk whose
+ * book row is missing (or whose book is another system) is not offered. The
+ * filter is OPT-IN so the global surfaces are untouched: the Rules page and the
+ * bestiary browser are global BY DESIGN (the owner may own several systems'
+ * books) and the wiki-link publisher is a library-wide reference resolver, so
+ * all three call this with NO system and see every creature, exactly as before.
+ * A caller that DOES know the campaign system — the creator window and the cast
+ * lookup — passes it, so the prompt vocabulary and the resolution that judges it
+ * are scoped by the SAME read.
+ */
+export async function listLibraryCreatures(system?: GameSystem): Promise<LibraryCreature[]> {
+  const chunks = await listChunksByType('statblock');
+  // The owning books, read once: the chunk row's `system` does not exist and
+  // its stat block's `system` is the ADAPTER's reading (a dnd5e-shaped block
+  // stored in a pf2e book would answer the wrong question) — the book is the
+  // row that really knows. `bulkGet` over the unique ids the pool names keeps
+  // this ONE read whatever the creature count. The BOOK INDEX is built here
+  // because this is the only caller with a live `db`; the filter and the sort
+  // are the domain seam's (`domain/libraryCreature.libraryCreaturePool`), which
+  // is also what the v24 migration's tx-backed arm calls — a second copy of
+  // either would let the live pool and the migration's pool drift (docs/17 row
+  // 248).
+  const books = new Map<Id, Rulebook>();
+  if (system !== undefined) {
+    const rows = await db.rulebooks.bulkGet([...new Set(chunks.map((chunk) => chunk.bookId))]);
+    for (const book of rows) {
+      if (book !== undefined) books.set(book.id, book);
+    }
+  }
+  return libraryCreaturePool(chunks, { system, books });
+}
+
+/** The same pool in the shape `lib/wikilinks` resolves against (the ONE
+ * conversion, so no caller re-derives it). Deliberately UNSCOPED (docs/17 row
+ * 207): a `[[Zombie]]` mention is an explicit user reference into the library,
+ * and the resolver must answer it whatever system the creature's book carries —
+ * a reader who owns several systems' books is not editing a campaign's system
+ * scope. Scoping this would silently turn a resolvable mention into a dangling
+ * link. */
+export async function wikiLinkCreatures(): Promise<WikiLinkCreature[]> {
+  return (await listLibraryCreatures()).map((creature) => ({
+    chunkId: creature.chunkId,
+    name: creature.name,
+  }));
+}
+
+/**
+ * Publishes the library creature pool to the wiki-link resolver (docs/11 D10)
+ * and answers with it. Called by the app shell once per library state
+ * (`app/use-library-creatures`) so every reader surface resolves a
+ * `[[Zombie]]` mention as a CITATION rather than a dangling link. Returns the
+ * published list, so a caller that needs it too does not read the table twice.
+ */
+export async function publishLibraryCreaturePool(): Promise<WikiLinkCreature[]> {
+  const creatures = await wikiLinkCreatures();
+  setLibraryCreaturePool(creatures);
+  return creatures;
+}
+
+/** The library identity of a creature addressed by its chunk id. */
+export function identityForChunk(chunkId: Id): CreatureIdentity {
+  return { kind: 'library', key: libraryCreatureKey(chunkId), ref: { chunkId } };
+}
+
+/**
+ * A creature identity is the WHOLE key of a presentation row, so an empty one
+ * would collapse every creature in the campaign onto one row (`['camp','']`)
+ * and show a stranger's portrait for a monster nobody illustrated. Refused
+ * LOUDLY here — the ONE door both reads and writes pass through — rather than
+ * silently answering "no art" or, worse, overwriting a shared row.
+ */
+function requireCreatureKey(creatureKey: string): void {
+  if (creatureKey.trim() === '') {
+    throw new Error(
+      'creature portrait: the creature identity is empty — every creature would share one portrait row; resolve the creature before reading or writing its portrait',
+    );
+  }
+}
+
+/**
+ * THE portrait question — the only one top code asks (docs/11 D6): which image
+ * is this creature's look IN THIS CAMPAIGN? Resolution order (AMENDED by
+ * docs/17 row 165 — the two halves SWAPPED, and why):
+ *
+ * 1. the cover/gallery of the artifact the caller names, when it has one: a
+ *    cast or hand-authored NPC's portrait lives on its OWN row, and that row's
+ *    card is what a module surface renders for it — so the board showing
+ *    anything else would be a disagreement of its own;
+ * 2. else the campaign's presentation row for the creature IDENTITY (a cited
+ *    creature has no artifact at all, and an invented mob never has one);
+ * 3. else null: no art yet, which is a NORMAL state, never an error.
+ *
+ * The swap is the whole point of row 165's differential: the reading has to
+ * answer with what the surface that OWNS the row shows. Both halves were
+ * already in this rule — a cited creature's token simply had no artifact to
+ * find, and the board asked only about the artifact.
+ *
+ * This is the SAME rule as `creaturePortraitImageIn` below over a live
+ * snapshot — the async shape reads the two rows, that one takes what its caller
+ * already holds — so the battle board (which renders from a snapshot), the
+ * portrait batch, the battle card and the module gap detector cannot answer
+ * "is this creature illustrated?" differently (docs/17 row 165: the board read
+ * a token's ARTIFACT cover instead, a place the creature tier left empty, and
+ * every cited mob showed initials while the batch reported it imaged).
+ */
+export async function creatureCoverImageId(options: {
+  campaignId: Id;
+  creatureKey: string;
+  /** The authored NPC whose own cover also answers (the cast path). */
+  npcArtifactId?: Id | null | undefined;
+}): Promise<Id | null> {
+  requireCreatureKey(options.creatureKey);
+  const presentation = await creatureImageIdsByKey(options.campaignId);
+  const npc =
+    options.npcArtifactId === undefined || options.npcArtifactId === null
+      ? undefined
+      : await getAnyArtifact(options.npcArtifactId);
+  return creaturePortraitImageIn({
+    presentationByKey: presentation,
+    creatureKey: options.creatureKey,
+    npcArtifact: npc,
+  });
+}
+
+/**
+ * The SAME question over the values a caller already holds — a campaign's
+ * presentation rows as a key→image map plus the artifact a roster row points
+ * at, when it points at one. Pure and synchronous BY DESIGN: the battle board
+ * renders every token from a live presentation snapshot and the module gap
+ * detector walks an artifact snapshot, so neither may take a database read per
+ * token or per roster row.
+ *
+ * An identity that is absent (a PC, a hand-authored NPC, a token that stands
+ * for no creature) is not an error here: such a creature's portrait is its
+ * artifact's own art, which is exactly rule 1 above — the reason an empty key
+ * is answered rather than refused, while the async shape refuses one at its own
+ * door (`requireCreatureKey`).
+ */
+export function creaturePortraitImageIn(options: {
+  presentationByKey: ReadonlyMap<string, Id>;
+  creatureKey?: string | undefined;
+  npcArtifact?: AnyArtifact | undefined;
+}): Id | null {
+  const npc = options.npcArtifact;
+  const own = npc === undefined ? null : npc.coverImageId ?? npc.imageIds[0] ?? null;
+  if (own !== null) return own;
+  const key = options.creatureKey;
+  if (key === undefined || key === '') return null;
+  return options.presentationByKey.get(key) ?? null;
+}
+
+/**
+ * What one BATTLE TOKEN stands for (docs/11 D5 amendment / D10): the creature
+ * identity the board resolves its portrait and its stat block by, plus the name
+ * to show and the stat-block chunk when the token's creature is a library one.
+ *
+ * The token's OWN `creatureKey` is the answer whenever it has one — seeding
+ * stamps it (`db/battleSeed`) for a `rulebook` citation and for an invented
+ * creature, so the board never has to re-derive an identity from an artifact
+ * that may not exist. An `npc-ref` token resolves through its artifact: a CAST
+ * creature npc carries its own COPY (docs/17 row 255b: its `statBlock` + the
+ * stamped `sourceLine` + the opaque `originToken`; a legacy row still carries
+ * `creatureRef`), a plain authored npc has no creature identity at all and
+ * yields `null` — its portrait is its own cover, managed in the editor, never on
+ * the board.
+ *
+ * THE BATTLE'S FROZEN ROW WINS over a live library read (`frozen`, docs/17 row
+ * 255b). A token whose creature came from the library is a COPY the battle owns
+ * — `db/battleSeed` freezes the block on its seed row — so the card must read
+ * the row and never re-resolve the `chunk:<id>` identity against the library.
+ * Otherwise uninstalling a pack strips an already-seeded battle of its AC and
+ * attacks, which is the read-side half of the owner's rule that core items are
+ * only ever copied.
+ */
+export async function tokenCreature(options: {
+  campaignId: Id;
+  creatureKey?: string | undefined;
+  artifactId: Id | null | undefined;
+  name: string;
+  /**
+   * The battle's frozen seed row for this token, when it has one (the token's
+   * `artifactId` is that row's synthetic id). Only the two fields the card
+   * reads are taken, so the caller passes the row rather than a projection.
+   */
+  frozen?: Pick<SeedFighter, 'statBlock' | 'originLabel'> | undefined;
+}): Promise<{
+  creatureKey: string;
+  name: string;
+  chunkId: Id | undefined;
+  statBlock: StatBlock | null;
+  identityLabel: string | null;
+} | null> {
+  const frozen = options.frozen;
+  if (options.creatureKey !== undefined && options.creatureKey !== '') {
+    const chunkId = chunkIdOfCreatureKey(options.creatureKey);
+    if (chunkId === null) {
+      // A content identity: the battle's frozen block IS the invented mob's
+      // stats (nothing else stores them), so the card reads the row.
+      return {
+        creatureKey: options.creatureKey,
+        name: options.name,
+        chunkId: undefined,
+        statBlock: frozen?.statBlock ?? null,
+        identityLabel: frozen?.originLabel ?? null,
+      };
+    }
+    if (frozen?.statBlock != null) {
+      // THE FROZEN COPY IS THE ROW (docs/17 row 255b): no library read at all.
+      return {
+        creatureKey: options.creatureKey,
+        name: options.name,
+        chunkId,
+        statBlock: frozen.statBlock,
+        identityLabel: frozen.originLabel ?? null,
+      };
+    }
+    const listing = await resolveCreatureCitation({ chunkId }, options.name);
+    return {
+      creatureKey: options.creatureKey,
+      name: listing.chunk === null ? options.name : listing.name,
+      chunkId,
+      statBlock: listing.chunk?.statBlock ?? null,
+      identityLabel: listing.origin,
+    };
+  }
+  if (options.artifactId === null || options.artifactId === undefined) return null;
+  const artifact = await getAnyArtifact(options.artifactId);
+  if (artifact?.kind !== 'npc') return null;
+  // A CAST creature npc that OWNS its numbers (docs/17 row 255b) carries the
+  // copy's stamp: its own block is the card's answer, under the identity its
+  // origin token preserves (so the portrait does not move). This is the case
+  // the roster's own `npc-ref` row reaches — the artifact fallback in
+  // `BattleSurface` would also cover the block, but this is where the card's
+  // identity and name come from. An authored npc with no stamp is not a
+  // creature card at all, and the pre-copy `creatureRef` fallback was deleted
+  // by the clean cut (docs/17 row 278).
+  if (artifact.data.sourceLine !== undefined || npcOriginToken(artifact) !== undefined) {
+    const rawToken = npcOriginToken(artifact);
+    const token = rawToken === undefined ? undefined : rawToken.trim();
+    const sourceLine = artifact.data.sourceLine?.trim();
+    return {
+      creatureKey:
+        npcCreatureIdentity(artifact)?.key ??
+        contentCreatureKey(artifact.name, artifact.data.statBlock),
+      name: artifact.name,
+      chunkId:
+        token === undefined || token === ''
+          ? undefined
+          : chunkIdOfCreatureKey(token) ?? undefined,
+      statBlock: artifact.data.statBlock,
+      identityLabel:
+        sourceLine === undefined || sourceLine === ''
+          ? null
+          : derivedStatOrigin(artifact.name, sourceLine),
+    };
+  }
+  return null;
+}
+
+/** The chunk a library creature identity key names, or null for a content key.
+ * The ONE parse of the `chunk:` prefix lives in `domain/creature`
+ * (`chunkIdOfOriginToken`), beside the mint — this delegates to it rather than
+ * spelling the prefix a second time. */
+export function chunkIdOfCreatureKey(creatureKey: string): Id | null {
+  return chunkIdOfOriginToken(creatureKey);
+}
+
+/** Where one creature's portrait stands, for the batch UI's counts. */
+export type CreaturePortraitArt = 'none' | 'cover';
+
+/**
+ * The same question for ONE creature, straight from the DB — the presentation
+ * row's own presence, read on its own (the batch's counts and the "is this
+ * creature illustrated?" probes that already hold a key).
+ *
+ * `creaturePortraitImageIn` above is the WIDER read of the same fact: it also
+ * consults the authored NPC a roster row points at, which is why a surface that
+ * must agree with what it RENDERS asks that one, never this.
+ */
+export async function creaturePortraitArt(
+  campaignId: Id,
+  creatureKey: string,
+): Promise<CreaturePortraitArt> {
+  return (await getCreatureImageRow(campaignId, creatureKey)) === undefined ? 'none' : 'cover';
+}
+
+/**
+ * Writes the campaign's presentation row for a creature identity — the ONE
+ * write of a creature's look (the portrait worker's commit path). Returns the
+ * row's image id.
+ *
+ * Replacement is delete-after-replace (docs/11 D5 preservation rule): the NEW
+ * row is written FIRST, so a crash between the two leaves the creature imaged
+ * with a stale pin rather than imageless with an orphaned blob; the superseded
+ * campaign image is released afterwards, and only when nothing else references
+ * it (the presentation row was its only pin).
+ */
+export async function setCreatureCover(options: {
+  campaignId: Id;
+  creatureKey: string;
+  imageId: Id;
+}): Promise<Id> {
+  requireCreatureKey(options.creatureKey);
+  const existing = await getCreatureImageRow(options.campaignId, options.creatureKey);
+  if (existing === undefined) {
+    await insertCreatureImageRow(options);
+    return options.imageId;
+  }
+  const superseded = existing.imageId;
+  await db.creatureImages.put({ ...existing, imageId: options.imageId });
+  if (superseded !== options.imageId) await deleteImageIfUnreferenced(superseded);
+  return options.imageId;
+}
+
+/* -------------------------------------------------------------------------
+ * D4 — THE CAST (the Aunt Agatha path)
+ * ---------------------------------------------------------------------- */
+
+export interface CastCreatureOptions {
+  campaignId: Id;
+  /**
+   * The module the NPC belongs to. `null` casts a campaign-level NPC. A module
+   * id that no longer exists fails LOUDLY (the ownership-boundary existence
+   * check, docs/18 §3) rather than stamping a dangling owner.
+   */
+  moduleId: Id | null;
+  /** The library creature whose stats the NPC borrows. */
+  citation: CreatureCitation;
+  /** The NPC's own name — the roster/wiki-link identity. */
+  name: string;
+  /**
+   * The authored prose the NPC is FOR (the module's text about them). Omitted
+   * ⇒ the NPC is cast as a bare named row (the bestiary roster's "Spawn into
+   * module" action): its `creatureRef` and derived stats are complete, and its
+   * prose is the module designer's to write — an empty text field is a state,
+   * never a placeholder (AGENTS rule 1).
+   */
+  prose?: { summary?: string; body?: string; appearance?: string; personality?: string };
+  /**
+   * The run doing the casting. Recorded on the NPC it CREATES as
+   * `data.castByRunId` — a marker of "cast but not yet written in", cleared by
+   * the generation seam the moment the NPC gets real prose. Idempotency itself
+   * is per (campaign, module, name, IDENTITY) and does not depend on this.
+   */
+  runId?: Id | undefined;
+  /** The model that wrote `prose`, when a model did (provenance arc). */
+  writerModel?: string | undefined;
+  meta?: RevisionMeta;
+}
+
+export type CastCreatureOutcome =
+  | { status: 'created'; artifactId: Id }
+  | { status: 'reused'; artifactId: Id };
+
+/**
+ * THE ONE WAY an authored NPC comes out of a creature (docs/11 D4). Given a
+ * campaign (and module), a library creature and authored prose, it creates a
+ * REAL `npc` artifact carrying that prose plus a COPY of the creature's stat
+ * block — the library bytes, the STAMPED origin line and the opaque
+ * `originToken` — so the NPC's numbers are its own and the derivation is
+ * disclosed in the origin label. The creature's cached portrait is seeded onto
+ * the NPC as its cover when one exists, through the existing clone machinery.
+ *
+ * THE COPY IS THE ONE SEAM'S (docs/17 row 255b). The row used to carry a
+ * `creatureRef` POINTER resolved at read time; the owner's rule is that core
+ * items are only ever COPIED, so the cast now calls
+ * `domain/libraryCopy.copyCreatureStats` — the same operation the v24 backfill
+ * and the roster write paths call — with the repo's own lookups. A creature the
+ * library cannot supply is the seam's LOUD refusal, never a pointer minted as a
+ * consolation (AGENTS rule 1).
+ *
+ * Nothing else in the app may create an NPC from a creature: the encounter
+ * generator cannot reach this module at all (docs/11 D5), which is how the
+ * asymmetry is enforced — by the ABSENCE OF A FUNCTION, not by a prompt rule.
+ *
+ * REUSE, never duplication (AGENTS rule 1: no silent overwrite): an existing
+ * cast of the SAME creature under the same name in the same scope is returned
+ * as-is — a second cast writes NOTHING to it, so prose a designer has since
+ * written in can never be clobbered by a re-run. "The same creature" is now
+ * answered by the copy's identity (`npcCreatureIdentity` — the `originToken`
+ * for a copy, the legacy `creatureRef` for an unconverted row), so the row's
+ * history of how it stores its numbers cannot change which creature it IS. A
+ * name already taken in that scope by anything else (an authored NPC, or a cast
+ * of a different creature) is a LOUD error naming the collision, never a silent
+ * merge or takeover.
+ */
+export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<CastCreatureOutcome> {
+  const name = options.name.trim();
+  if (name === '') {
+    throw new Error('cast creature as npc: an NPC cannot be cast without a name');
+  }
+  const prose = options.prose ?? {};
+  /** The `module:<title>` tag a module-owned row carries — the compatibility
+   * tag every module-scoped reader keys on. A cast npc is an ORDINARY npc of
+   * that module (docs/11 D4), so it carries it like any other: without it the
+   * row existed but no module-scoped predicate could see it as owned. */
+  let moduleTag: string | null = null;
+  if (options.moduleId !== null) {
+    const module = await db.modules.get(options.moduleId);
+    if (module === undefined) {
+      throw new Error(
+        `cast creature as npc: module ${options.moduleId} no longer exists — re-anchor the entity before casting`,
+      );
+    }
+    moduleTag = moduleTagFor(module.title);
+  }
+  const result = await copyCreatureStats(options.citation, name, {
+    ...creatureLookups(),
+    // The spell arm (docs/17 row 255c): a cast row owns the library entry of
+    // every spell its block assigns, through the SAME lazy corpus lookup the
+    // live wrapper uses — never a second read spelling.
+    spellIndex: spellIndexLookup(),
+  });
+  if (result.status === 'unresolved') {
+    // Loud (AGENTS rule 1): casting a creature the library cannot supply would
+    // mint an NPC whose numbers are a silent hole. The reason is the ONE copy
+    // seam's own, never re-worded here.
+    throw creatureCopyRefusal(name, result.reason);
+  }
+  const copy = result.copy;
+  const owned = await listArtifactsByCampaign(options.campaignId);
+  // "Is this row already the cast of THIS name?" — the ONE name comparison
+  // (docs/17 row 166), which also trims the queried side: the hand-rolled
+  // `artifact.name.trim().toLowerCase() === name.toLowerCase()` it replaces
+  // trimmed only the ROW, so a caller passing a padded name minted a twin
+  // (the untrimmed-side drift docs/17 row 121 folded elsewhere).
+  const candidates = owned.filter(
+    (artifact): artifact is NpcArtifact =>
+      artifact.kind === 'npc' &&
+      artifact.moduleId === options.moduleId &&
+      sameAliasName(artifact.name, name),
+  );
+  // Idempotency is per (campaign, module, name, IDENTITY): a second cast of the
+  // SAME creature reuses its row rather than minting a twin, and a candidate
+  // that draws from a DIFFERENT creature is a rival — taking it over would
+  // silently re-stat an NPC the owner authored. The identity question is asked
+  // through the ONE artifact-identity rule, so a row that still points
+  // (`creatureRef`) and a row that already owns a copy (`originToken`) answer it
+  // the same way.
+  const sameIdentity = (artifact: NpcArtifact): boolean =>
+    npcCreatureIdentity(artifact)?.key === copy.originToken;
+  const match = candidates.find(sameIdentity);
+
+  let artifactId: Id;
+  let status: 'created' | 'reused';
+  if (match !== undefined) {
+    artifactId = match.id;
+    status = 'reused';
+    // A row this function created already carries the tag. One that does not
+    // was cast by an older build (or written by hand): stamping it is the only
+    // way the module-scoped readers can see it as owned, and it is done HERE,
+    // once, rather than reported as a silent hole.
+    const moduleId = options.moduleId;
+    if (moduleId !== null && moduleTag !== null && !match.tags.includes(moduleTag)) {
+      await stampModuleOwnership(match.id, moduleId, moduleTag);
+    }
+  } else {
+    const rival = candidates[0];
+    if (rival !== undefined) {
+      throw new Error(
+        isCastCreatureNpc(rival)
+          ? `cast creature as npc: «${name}» already exists in this scope drawing its stats from a DIFFERENT library creature — drop one of the two instead of casting over it`
+          : `cast creature as npc: «${name}» already exists in this scope as an authored NPC — drop one of the two instead of casting over it`,
+      );
+    }
+    const created = await createArtifact(
+      {
+        campaignId: options.campaignId,
+        ...(moduleTag === null ? {} : { tags: [moduleTag] }),
+        ...(options.moduleId === null ? {} : { moduleId: options.moduleId }),
+        kind: 'npc',
+        name,
+        ...(prose.summary === undefined ? {} : { summary: prose.summary }),
+        ...(prose.body === undefined ? {} : { body: prose.body }),
+        data: {
+          appearance: prose.appearance ?? '',
+          personality: prose.personality ?? '',
+          // The COPY, in full (docs/17 row 255b): the library bytes, the
+          // stamped origin line and the opaque identity token. No `creatureRef`
+          // is minted — that is the pointer this slice removes.
+          statBlock: copy.statBlock,
+          sourceLine: copy.sourceLine,
+          originToken: copy.originToken,
+          ...(options.runId === undefined ? {} : { castByRunId: options.runId }),
+        },
+        ...(options.writerModel === undefined ? {} : { writerModel: options.writerModel }),
+      },
+      options.meta ?? { source: 'user' },
+    );
+    artifactId = created.id;
+    status = 'created';
+  }
+
+  // Seed the cover from the creature's canonical portrait when one exists —
+  // skip-if-imaged, so a portrait the owner set is never overwritten. The key
+  // is the copy's own token, which IS the library identity key the portrait
+  // cache mints (`libraryCreatureKey(resolvedChunkId)`), so a cast still shares
+  // the creature's canonical portrait with no remap.
+  const slot = await getMobPortraitCacheEntry(copy.originToken);
+  if (slot !== undefined) {
+    await cloneCachedPortraitToArtifact({
+      artifactId,
+      campaignId: options.campaignId,
+      imageId: slot.imageId,
+    });
+  }
+  return { status, artifactId };
+}
