@@ -42,6 +42,7 @@ import {
   GENERATION_KINDS,
   generationKindLabel,
   overwriteJobCount,
+  redrawnByDetail,
   selectGenerationTargets,
   type GenerationKind,
   type GenerationLevelRange,
@@ -206,6 +207,10 @@ export function GenerationDialog({
   // per-kind numbers: the printed line always sums to `totalCount`.
   const { overwrites } = selection;
   const replacing = overwriteJobCount(overwrites);
+  // Encounters the overwrite regenerates IN FULL (docs/17 row 423): each one's
+  // battlemap is redrawn by that regeneration, not by a map job — the
+  // confirmation says so, and the map count above never includes them.
+  const regeneratedEncounters = redrawnByDetail(overwrites).size;
   const plannedDetails = selection.detail.length + overwrites.details.length;
   const plannedImages =
     selection.images.length + selection.pendingImages.length + overwrites.images.length;
@@ -658,8 +663,12 @@ export function GenerationDialog({
                 <p className="text-muted-foreground">
                   Details are regenerated in place by the current model: same artifact, links and
                   battles keep working, and the previous text stays restorable from the artifact’s
-                  revisions. An encounter gets a new roster and fresh content; its name and
-                  battlemap are kept (tick Battlemaps to redraw the map too).
+                  revisions.
+                </p>
+              )}
+              {regeneratedEncounters > 0 && (
+                <p className="text-muted-foreground" data-testid="generation-overwrite-encounters">
+                  {`${String(regeneratedEncounters)} encounter${regeneratedEncounters === 1 ? ' is' : 's are'} regenerated completely — new roster, room layout and prose; the name is kept so links still resolve. Regenerating an encounter redraws its battlemap (whether or not Battlemaps is ticked): the old map is deleted once the new one has landed.`}
                 </p>
               )}
               {overwrites.images.length + overwrites.maps.length + overwrites.mobPortraits.length > 0 && (

@@ -1,4 +1,4 @@
-import { getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
+import { attachImagesToArtifact, getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -27,6 +27,9 @@ import { runEngine, waitForRunStatus } from '@/llm/runEngine';
  *   pipeline just built (a reply that tries fails loud, never
  *   partial-applies). For singles the Smith leg always refreshes prose per
  *   its charter — the checkbox additionally replaces the name there.
+ * - `freshProse` (the generation overwrite, docs/17 row 423): the SAME
+ *   prose-only pass, but the name is KEPT exactly — a complex regenerated for
+ *   model evaluation gets fresh prose without detaching its `[[Name]]` links.
  *
  * Every awaited run uses autonomy `'auto'` (fully automatic, no checkpoints)
  * and is verified terminal-`completed` — any other terminal status throws
@@ -38,6 +41,17 @@ import { runEngine, waitForRunStatus } from '@/llm/runEngine';
 export interface EncounterRegenOptions {
   /** The "Also redesign name and prose" checkbox (default OFF). */
   redesignProse: boolean;
+  /**
+   * FRESH PROSE, NAME KEPT (docs/17 row 423 — the generation dialog's
+   * overwrite: *"If the users intent is to regenerate encounters, i think
+   * keeping them largely fixed is the wrong way"*). Regenerate everything on a
+   * COMPLEX keeps name and prose by contract; this runs the prose-only pass
+   * after it with the name kept EXACTLY (the module text links the encounter by
+   * `[[Name]]` and the selection finds its map/portrait work by name). A no-op
+   * for singles (their Smith leg always writes fresh prose) and for a run that
+   * already redesigns name and prose (`redesignProse` wins).
+   */
+  freshProse?: boolean;
   /**
    * The D18 per-run dungeon-map path for Regenerate everything (docs/11
    * vision path): `'vision'`/`'classic'` force the path for a COMPLEX
@@ -200,9 +214,7 @@ export async function repopulateEncounter(
     encounterMapAspect: settings.encounterMapAspect,
   });
   await awaitCompletedRun(runId, 'Repopulate', options.signal);
-  if (options.redesignProse) {
-    await runProseRedesign(campaign, smith, artifactId, options);
-  }
+  await runProsePass(campaign, smith, artifactId, options);
 }
 
 /**
@@ -213,6 +225,13 @@ export async function repopulateEncounter(
  * pipeline with the CURRENT preset resolution. Single: a fresh one-fight
  * draft plus a fresh map in ONE action (the existing Smith + Cartographer
  * pieces, chained). Both honor the fill grade.
+ *
+ * BOTH shapes end with EXACTLY one map in the gallery (docs/11 D16, the
+ * single-map-slot rule): a single's map leg swaps the slot in its finalize; a
+ * complex's reset clears `mapImageId` first, so the finalize has nothing to
+ * swap and the previous map is removed HERE, once the fresh map has landed
+ * (docs/17 row 423 — it used to stay behind as a plain gallery image). A failed
+ * run keeps it.
  */
 export async function regenerateEncounterEverything(
   artifactId: Id,
@@ -257,10 +276,12 @@ export async function regenerateEncounterEverything(
   const artifact = await getAnyArtifact(artifactId);
   if (artifact?.kind !== 'encounter') throw new Error('The encounter to regenerate no longer exists');
   // The reset: roster + layout + map go, everything the contract keeps stays
-  // (fillGrade, siteShape, locationKind, name, prose, links, tags, images —
-  // the old map file stays in the gallery as a plain image; the finalize
-  // lands the fresh one). A revision snapshots the pre-reset row, so a
-  // failed run is restorable, never silent data loss.
+  // (fillGrade, siteShape, locationKind, name, prose, links, tags, images).
+  // The old map FILE stays in the gallery until the fresh one has landed
+  // (removed below — delete-after-replace, docs/17 row 423). A revision
+  // snapshots the pre-reset row, so a failed run is restorable, never silent
+  // data loss.
+  const previousMapImageId = artifact.data.mapImageId;
   await resetComplexForRegeneration(artifactId);
   const reread = await getAnyArtifact(artifactId);
   if (reread?.kind !== 'encounter') throw new Error('The encounter to regenerate no longer exists');
@@ -283,8 +304,54 @@ export async function regenerateEncounterEverything(
       : { dungeonMapPath: options.dungeonMapPath }),
   });
   await awaitCompletedRun(runId, 'Regenerate everything', options.signal);
+  await removeReplacedMap(artifactId, previousMapImageId, runId);
+  await runProsePass(campaign, smith, artifactId, options);
+}
+
+/**
+ * The complex half of the single-map-slot replace (docs/11 D16, docs/17 row
+ * 423): the run COMPLETED with a fresh map, so the previous one leaves the
+ * gallery through the attach seam — exactly the swap a single's finalize does
+ * (`removeImageIds` + the refchecked `pruneCandidates`, so a live board or a
+ * revision snapshot that still pins it keeps its blob). The cover is passed
+ * through unchanged (the seam would otherwise clear it).
+ */
+async function removeReplacedMap(artifactId: Id, previousMapImageId: Id | null, runId: Id): Promise<void> {
+  if (previousMapImageId === null) return;
+  const regenerated = await getAnyArtifact(artifactId);
+  if (regenerated?.kind !== 'encounter') throw new Error('The regenerated encounter no longer exists');
+  if (regenerated.data.mapImageId === previousMapImageId) return;
+  if (!regenerated.imageIds.includes(previousMapImageId)) return;
+  await attachImagesToArtifact(artifactId, {
+    removeImageIds: [previousMapImageId],
+    coverImageId: regenerated.coverImageId,
+    meta: { source: 'persona', runId },
+    ...(regenerated.campaignId === null
+      ? {}
+      : {
+          pruneCandidates: {
+            campaignId: regenerated.campaignId,
+            candidateIds: [previousMapImageId],
+          },
+        }),
+  });
+}
+
+/**
+ * The prose leg after a complex's automatic pass, when one was asked for: the
+ * checkbox renames (`redesignProse`), the overwrite keeps the name
+ * (`freshProse`). Neither = the contract's "name and prose preserved".
+ */
+async function runProsePass(
+  campaign: Campaign,
+  smith: Persona,
+  artifactId: Id,
+  options: EncounterRegenOptions,
+): Promise<void> {
   if (options.redesignProse) {
-    await runProseRedesign(campaign, smith, artifactId, options);
+    await runProseRedesign(campaign, smith, artifactId, options, { rename: true });
+  } else if (options.freshProse === true) {
+    await runProseRedesign(campaign, smith, artifactId, options, { rename: false });
   }
 }
 
@@ -292,13 +359,16 @@ export async function regenerateEncounterEverything(
  * The prose checkbox's second leg (two-button regeneration, docs/11):
  * prose-ONLY by contract — the Smith draft's persist is scoped to
  * name/summary/body, and a reply that tries to rewrite monsters fails loud,
- * never partial-applies.
+ * never partial-applies. `rename: false` (the overwrite's fresh prose, docs/17
+ * row 423) keeps the name exactly: the engine persists only summary/body
+ * unless `encounterRedesignName` is set.
  */
 async function runProseRedesign(
   campaign: Campaign,
   smith: Persona,
   artifactId: Id,
   options: EncounterRegenOptions,
+  { rename }: { rename: boolean },
 ): Promise<void> {
   const artifact = await getAnyArtifact(artifactId);
   if (artifact?.kind !== 'encounter') throw new Error('The encounter to redesign no longer exists');
@@ -310,7 +380,9 @@ async function runProseRedesign(
     persona: smith,
     autonomy: 'auto',
     brief: legBrief(
-      `Redesign the name and prose of "${artifact.name}" — prose ONLY. ` +
+      (rename
+        ? `Redesign the name and prose of "${artifact.name}" — prose ONLY. `
+        : `Rewrite the prose of "${artifact.name}" — prose ONLY; the name "${artifact.name}" is kept exactly. `) +
         `Copy the roster verbatim (names and counts: ${roster === '' ? 'no monsters' : roster}); ` +
         'renaming, adding or removing a monster fails the run. Layout, battlemap, treasure and all other data are preserved.',
       options,
@@ -318,8 +390,9 @@ async function runProseRedesign(
     pinnedChunkIds: [],
     targetArtifactId: artifactId,
     encounterProseOnly: true,
+    ...(rename ? { encounterRedesignName: true as const } : {}),
   });
-  await awaitCompletedRun(runId, 'Prose redesign', options.signal);
+  await awaitCompletedRun(runId, rename ? 'Prose redesign' : 'Prose rewrite', options.signal);
 }
 
 /**

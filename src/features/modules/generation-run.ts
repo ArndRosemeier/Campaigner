@@ -17,6 +17,7 @@ import {
   reportEntityBatchNotices,
 } from '@/features/modules/entity-batch-report';
 import {
+  redrawnByDetail,
   selectGenerationTargets,
   selectedNameResolves,
   type GenerationEncounterExtras,
@@ -73,10 +74,13 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * that were already there get removed and generated freshly"), the selection's
  * `overwrites` are regenerated through the SAME engines, never a second
  * generator: a detail IN PLACE (the change seam's own engine — `runEntityBatch`
- * with the row's `artifactId`, or `changeArtifact`'s repopulate for an
- * encounter: same id, fresh text, the previous text kept as a revision), and
- * the cover / battlemap / mob portraits DELETE-AFTER-REPLACE through each
- * queue's own `regen` job (the old art goes only once the fresh art landed).
+ * with the row's `artifactId`, or `changeArtifact`'s "regenerate everything"
+ * for an encounter, docs/17 row 423: same id, fresh roster, layout, map and
+ * prose, the name kept, the previous text kept as a revision), and the cover /
+ * battlemap / mob portraits DELETE-AFTER-REPLACE through each queue's own
+ * `regen` job (the old art goes only once the fresh art landed). An encounter
+ * whose detail is regenerated gets no separate map job — its regeneration
+ * redraws the map (the selection leaves it out of both map sets).
  *
  * A STOP IS CONSULTED BETWEEN EVERY UNIT (the app-level stop epoch,
  * `lib/stopEpoch`): the whole point of "Stop all" is that a stop ends the NEXT
@@ -400,10 +404,17 @@ async function runSelectionUnlocked(
     }
 
     // 3) Battlemaps — an EXPLICIT tick, never a side effect of generating an
-    // encounter (the automatic trigger this row removes).
+    // encounter (the automatic trigger this row removes). An encounter whose
+    // DETAIL was overwritten is in neither set: its regeneration already
+    // redrew the map (docs/17 row 423, decided by the selection seam).
     if (encounterExtras.battlemaps) {
       if (actual.maps.length === 0 && replacing.maps.length === 0) {
-        nameEmpty('battlemaps', 'no selected encounter needs one');
+        nameEmpty(
+          'battlemaps',
+          redrawnByDetail(replacing).size > 0
+            ? 'each regenerated encounter redrew its own'
+            : 'no selected encounter needs one',
+        );
       } else {
         const queue = useEncounterMapQueue.getState();
         const job = (target: GenerationEncounterTarget) => ({
@@ -518,19 +529,22 @@ async function runSelectionUnlocked(
 }
 
 /**
- * The ENCOUNTER half of a detail overwrite (docs/17 row 422): each existing
- * encounter is regenerated IN PLACE through THE change seam
- * (`changeArtifact`, docs/17 row 101) with the encounter's own REPOPULATE
- * operation — a new roster and fresh content on the SAME row, its name, links
- * and battlemap kept (the old content stays restorable from its revisions).
+ * The ENCOUNTER half of a detail overwrite (docs/17 rows 422, 423): each
+ * existing encounter is regenerated IN PLACE through THE change seam
+ * (`changeArtifact`, docs/17 row 101) with the encounter's "REGENERATE
+ * EVERYTHING" operation and `freshProse` — a FULL regeneration on the SAME row:
+ * new roster, new layout, new battlemap (the old map leaves the gallery once
+ * the new one has landed) and fresh prose, the old content restorable from its
+ * revisions. The owner, rejecting row 422's roster-only repopulate: *"If the
+ * users intent is to regenerate encounters, i think keeping them largely fixed
+ * is the wrong way even if its more complicated to replace them."*
  *
- * WHY NOT "REGENERATE EVERYTHING": that operation also redraws the battlemap —
- * an image the owner did not tick (battlemaps are an explicit tick, docs/17 row
- * 406) — and on a multi-room encounter it leaves the old map in the gallery,
- * the opposite of the owner's "the old one is removed". A ticked battlemap is
- * redrawn by the map queue's own replace job instead. And `redesignProse` stays
- * OFF: it RENAMES the encounter, and the selection finds an encounter's map and
- * portrait work by its name, so a rename would silently detach it.
+ * THE NAME IS KEPT, exactly: `freshProse` is the prose-only pass WITHOUT the
+ * rename (`redesignProse` stays OFF — it renames), because the module text
+ * links the encounter by `[[Name]]` and the selection finds its map and
+ * portrait work by name. The map is redrawn whether or not Battlemaps is
+ * ticked — a new layout invalidates the old map — and the dialog's
+ * confirmation says so.
  *
  * Sequential, with the stop epoch consulted between encounters; a run the owner
  * stopped is withdrawn, never reported as a failure. Every other failure is
@@ -547,7 +561,7 @@ async function regenerateEncountersInPlace(
     try {
       const result = await changeArtifact({
         artifactId: target.artifactId,
-        encounter: { operation: 'repopulate' },
+        encounter: { operation: 'everything', freshProse: true },
       });
       if (result.status === 'changed') regenerated += 1;
       else failures.push(`"${target.name}" — ${result.reason}`);

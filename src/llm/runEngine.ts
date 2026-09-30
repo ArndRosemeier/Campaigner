@@ -1064,7 +1064,11 @@ export interface StartRunInput {
   /**
    * Smith encounter in-place fills only: `true` replaces the target's name
    * with the draft's (the old name becomes an alias) instead of the default
-   * name-preserving alias behavior.
+   * name-preserving alias behavior. On a prose-only pass (`encounterProseOnly`)
+   * it is what makes the pass RENAME (the editor's "Also redesign name and
+   * prose"); without it the prose-only pass keeps the target's name EXACTLY and
+   * rewrites summary/body only (the generation overwrite's fresh prose, docs/17
+   * row 423 — the module links the encounter by `[[Name]]`).
    */
   encounterRedesignName?: boolean;
 }
@@ -3854,8 +3858,12 @@ export class RunEngine {
       // file is final — redesign ONLY name/summary/body prose and copy every
       // roster entry's name and count verbatim. Renaming, adding or removing
       // a monster fails the run (the persist is scoped to name/prose/body).
+      // Without `encounterRedesignName` the pass keeps the name (docs/17 row
+      // 423): the line says so instead of inviting a rename the persist drops.
       kind === 'encounter' && input.encounterProseOnly === true
-        ? 'Prose-only redesign: redesign ONLY the name, summary and body prose — copy every roster entry (name and count) verbatim from the existing encounter. Renaming, adding or removing a monster fails the run.'
+        ? input.encounterRedesignName === true
+          ? 'Prose-only redesign: redesign ONLY the name, summary and body prose — copy every roster entry (name and count) verbatim from the existing encounter. Renaming, adding or removing a monster fails the run.'
+          : 'Prose-only rewrite: rewrite ONLY the summary and body prose — keep the encounter\'s name exactly as it is, and copy every roster entry (name and count) verbatim from the existing encounter. Renaming, adding or removing a monster fails the run.'
         : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       additionalInstructionSection(extraInstruction),
@@ -7653,14 +7661,24 @@ export class RunEngine {
               'a prose redesign must copy the roster verbatim. Nothing was changed; re-run the prose pass.',
           );
         }
-        const nextName = draftName.trim();
+        // THE NAME IS AN INPUT unless the pass was asked to rename (docs/17 row
+        // 423): the generation overwrite rewrites the prose of an encounter the
+        // module text links by `[[Name]]` and whose map/portrait work is found
+        // by name, so it keeps the name EXACTLY — the draft's `name` field is
+        // not an output there (the prompt said so), and the aliases stay as
+        // they are. The editor's "Also redesign name and prose" passes
+        // `encounterRedesignName` and renames as it always did.
+        const renameProse = input.encounterRedesignName === true;
+        const nextName = renameProse ? draftName.trim() : target.name;
         // The name the row is about to carry was answerable a moment ago, so it
         // stays answerable: it joins the pool through the ONE alias merge rule
         // (`mergeAliasNames` — trimmed, case-insensitive, never a duplicate,
         // never equal to the row's own new name). The alias rides THIS patch
         // (name + prose + provenance are one revision), which is why the rule is
         // called directly instead of through `artifactRepo.addArtifactAliases`.
-        const nextAliases = mergeAliasNames(target.aliases, [target.name], nextName);
+        const nextAliases = renameProse
+          ? mergeAliasNames(target.aliases, [target.name], nextName)
+          : target.aliases;
         await updateArtifact(
           target.id,
           {

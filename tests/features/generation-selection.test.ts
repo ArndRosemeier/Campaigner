@@ -531,15 +531,64 @@ describe('the overwrite box (docs/17 row 422)', () => {
     // ordinary additive image work).
     expect(on.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
     expect(on.images.map((target) => target.name)).toEqual(off.images.map((target) => target.name));
-    // The mapped encounter is a redraw; its portraits are a replace-all, and it
-    // is NOT also counted as a fill (one encounter, one portrait job).
-    expect(on.overwrites.maps.map((target) => target.artifactId)).toEqual([idOf('Ash Fight')]);
+    // The mapped encounter's DETAIL is regenerated, and that regeneration
+    // redraws its map (docs/17 row 423) — so it is NOT also a map job. Its
+    // portraits are a replace-all, NOT also counted as a fill (one encounter,
+    // one portrait job).
+    expect(on.overwrites.maps).toEqual([]);
     expect(on.overwrites.mobPortraits.map((target) => target.artifactId)).toEqual([idOf('Ash Fight')]);
     expect(on.mobPortraits).toEqual([]);
     // The additive work is untouched, and the announced count is TRUE: the old
     // count, minus the fill the replace-all absorbed, plus every overwrite job.
     expect(on.detail).toEqual(off.detail);
-    expect(on.totalCount).toBe(off.totalCount - 1 + 3 + 1 + 1 + 1);
+    expect(on.totalCount).toBe(off.totalCount - 1 + 3 + 1 + 0 + 1);
+  });
+
+  it('an encounter whose DETAIL is overwritten is in NEITHER map set — mapped or not, its regeneration draws the map (docs/17 row 423)', () => {
+    const { module, artifacts } = fixed;
+    // The same world with the encounter UNMAPPED: additively it needs a map.
+    const unmapped = artifacts.map((artifact) =>
+      artifact.kind === 'encounter'
+        ? { ...artifact, imageIds: [], data: { ...artifact.data, layout: null, mapImageId: null } }
+        : artifact,
+    );
+    const select = (overwrite: boolean) =>
+      selectGenerationTargets({
+        module,
+        artifacts: unmapped,
+        kinds: ['npc', 'location', 'encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: true, mobPortraits: false },
+        overwrite,
+      });
+    const off = select(false);
+    const on = select(true);
+    const encounterId = unmapped.find((artifact) => artifact.kind === 'encounter')?.id;
+    expect(off.maps.map((target) => target.artifactId)).toEqual([encounterId]);
+    expect(on.overwrites.details.map((target) => target.artifactId)).toContain(encounterId);
+    expect(on.maps).toEqual([]);
+    expect(on.overwrites.maps).toEqual([]);
+    // The count drops the map job and adds the three detail regenerations.
+    expect(on.totalCount).toBe(off.totalCount - 1 + 3);
+    // A HELD encounter (no level: not regenerated) keeps its map redraw.
+    const held: Module = {
+      ...module,
+      entityKinds: module.entityKinds.map((entry) =>
+        entry.name === 'Ash Fight' ? { name: entry.name, kind: entry.kind, absorbed: entry.absorbed } : entry,
+      ),
+    };
+    const heldOn = selectGenerationTargets({
+      module: held,
+      artifacts,
+      kinds: ['npc', 'location', 'encounter'],
+      imageKinds: [],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: true, mobPortraits: false },
+      overwrite: true,
+    });
+    expect(heldOn.overwrites.details.map((target) => target.name)).not.toContain('Ash Fight');
+    expect(heldOn.overwrites.maps.map((target) => target.name)).toEqual(['Ash Fight']);
   });
 
   it('an unticked extra replaces nothing of its kind', () => {

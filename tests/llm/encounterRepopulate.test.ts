@@ -661,6 +661,150 @@ describe('complex Regenerate everything (reset + full pipeline)', () => {
   });
 });
 
+/**
+ * THE GENERATION OVERWRITE'S FULL REGENERATION (docs/17 row 423). The owner:
+ * *"If the users intent is to regenerate encounters, i think keeping them
+ * largely fixed is the wrong way even if its more complicated to replace
+ * them."* So `freshProse` runs the prose-only pass after the complex rebuild
+ * with the name KEPT (the module links it by `[[Name]]`), and the replaced map
+ * leaves the gallery once the new one has landed (docs/11 D16).
+ */
+describe('Regenerate everything with fresh prose, name kept (docs/17 row 423)', () => {
+  /** The user prompt of every chat call so far. */
+  function userPrompts(): string[] {
+    return chatMock.mock.calls.map((call) => {
+      const content = call[0].find((message) => message.role === 'user')?.content ?? '';
+      return typeof content === 'string' ? content : JSON.stringify(content);
+    });
+  }
+
+  /** The brief for every Cartographer call, the prose draft for the prose pass. */
+  function routeProsePass(prose: Record<string, unknown>): void {
+    const pipeline = chatAnsweringClassicFigures(JSON.stringify(REPOPULATE_BRIEF));
+    chatMock.mockImplementation((messages, options) => {
+      const content = messages.find((message) => message.role === 'user')?.content;
+      if (typeof content === 'string' && content.includes('Prose-only')) {
+        return Promise.resolve({ text: JSON.stringify(smithDraft(prose)), modelUsed: 'test-model', fallback: null });
+      }
+      return pipeline(messages, options);
+    });
+  }
+
+  const PROSE_ROSTER = [0, 1, 2, 3].map((index) => ({
+    name: 'Goblin Boss',
+    count: 2,
+    notes: ['entry guards', 'ossuary pack', 'ritual circle', 'sanctum guard'][index] ?? '',
+    treasure: '',
+    statBlock: INLINE_STATBLOCK,
+  }));
+
+  it('a COMPLEX gets a new roster, layout and map AND fresh prose, its name kept EXACTLY; the old map leaves the gallery', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedComplexTarget(campaign.id, goblinChunkId);
+    const oldMap = target.data.mapImageId;
+    if (oldMap === null) throw new Error('fixture: the complex must carry a map');
+    // The old map is in the gallery, as a mapped encounter's map is.
+    await updateArtifact(target.id, { imageIds: [oldMap] });
+    const beforeRoomIds = target.data.layout?.rooms.map((room) => room.id) ?? [];
+    routeProsePass({
+      name: 'A Model-Invented Name',
+      summary: 'A freshly written crypt.',
+      body: '# Fresh\nNew prose for the model evaluation.',
+      monsters: PROSE_ROSTER,
+    });
+
+    await regenerateEncounterEverything(target.id, { redesignProse: false, freshProse: true });
+
+    const after = await getArtifact(target.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    // Fresh prose, the name EXACTLY as it was (and no alias invented from the
+    // draft's name: the name is an input on this pass).
+    expect(after.name).toBe('Old Undercroft');
+    expect(after.summary).toBe('A freshly written crypt.');
+    expect(after.body).toBe('# Fresh\nNew prose for the model evaluation.');
+    expect(after.aliases).toEqual(target.aliases);
+    // A new roster, layout and map on the SAME row.
+    expect(after.id).toBe(target.id);
+    expect(after.data.monsters.map((monster) => monster.name)).toEqual(Array(4).fill('Goblin Boss'));
+    expect(after.data.layout?.rooms.map((room) => room.id)).not.toEqual(beforeRoomIds);
+    expect(after.data.mapImageId).not.toBeNull();
+    expect(after.data.mapImageId).not.toBe(oldMap);
+    // ONE map in the gallery: the fresh one in, the old one out (D16).
+    expect(after.imageIds).toContain(after.data.mapImageId);
+    expect(after.imageIds).not.toContain(oldMap);
+    // The prose pass told the model to KEEP the name (never the rename line).
+    const prosePrompt = userPrompts().find((prompt) => prompt.includes('Prose-only'));
+    expect(prosePrompt).toContain('keep the encounter\'s name exactly as it is');
+    expect(prosePrompt).not.toContain('redesign ONLY the name');
+  });
+
+  it('a COMPLEX whose rebuild FAILS keeps its old map in the gallery (delete only after the replacement landed)', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedComplexTarget(campaign.id, goblinChunkId);
+    const oldMap = target.data.mapImageId;
+    if (oldMap === null) throw new Error('fixture: the complex must carry a map');
+    await updateArtifact(target.id, { imageIds: [oldMap] });
+    chatMock.mockRejectedValue(new Error('provider exploded'));
+
+    await expect(
+      regenerateEncounterEverything(target.id, { redesignProse: false, freshProse: true }),
+    ).rejects.toThrow('Regenerate everything ended failed');
+
+    const after = await getArtifact(target.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.imageIds).toContain(oldMap);
+    expect(after.name).toBe('Old Undercroft');
+    expect(after.body).toBe('Existing prose.');
+  });
+
+  it('a SINGLE regenerates its prose through the Smith leg with the name kept (no rename, no extra prose pass)', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedSingleTarget(campaign.id, goblinChunkId);
+    const beforeMap = target.data.mapImageId;
+    const singleBrief = {
+      name: 'Gate Ambush',
+      summary: 'A gate fight.',
+      body: '# Gate\nOne fight.',
+      difficulty: 'medium',
+      levelHint: '', partyLevel: 3,
+      terrain: 'gatehouse',
+      tactics: 'hold',
+      treasure: 'none',
+      theme: 'stone gate',
+      styleNotes: 'inked fantasy map',
+      negative: 'text, labels, tokens',
+      environment: 'outdoor',
+      monsters: [{ name: 'Ash Cultist', count: 2, notes: 'cut off the retreat', treasure: '' }],
+      rooms: [
+        { name: 'Gate', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: '', keyTreasure: '', targetLevel: 3 },
+      ],
+      entryRoomIndex: 0,
+    };
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify(smithDraft({ name: 'Renamed Gate', body: '# Fresh single prose' })),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(singleBrief)));
+
+    await regenerateEncounterEverything(target.id, { redesignProse: false, freshProse: true });
+
+    const after = await getArtifact(target.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.name).toBe('Gate Ambush');
+    expect(after.body).toBe('# Fresh single prose');
+    expect(after.data.monsters.map((monster) => monster.name)).toEqual(['Ash Cultist']);
+    expect(after.data.mapImageId).not.toBeNull();
+    expect(after.data.mapImageId).not.toBe(beforeMap);
+    // The Smith leg IS the prose pass for a single: no prose-only run follows.
+    expect(userPrompts().filter((prompt) => prompt.includes('Prose-only'))).toHaveLength(0);
+  });
+});
+
 describe('prose checkbox (prose-only redesign)', () => {
   it('ON redesigns name and prose without touching the roster (monsters byte-identical)', async () => {
     const { campaign } = await setup();

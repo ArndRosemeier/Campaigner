@@ -14,6 +14,7 @@ import {
   type Module,
 } from '@/domain';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 import { clearDatabase } from '../db/helpers';
 import { GenerationDialog } from '@/features/modules/generation-dialog';
 import { selectGenerationTargets } from '@/features/modules/generation-selection';
@@ -719,5 +720,74 @@ describe('the overwrite box (docs/17 row 422)', () => {
       expect(runGenerationSelection).toHaveBeenCalledTimes(1);
     });
     expect(runGenerationSelection.mock.calls[0]?.[0].overwrite).toBe(true);
+  });
+
+  it('an existing encounter is regenerated IN FULL: the confirmation says its battlemap is redrawn, and no map job is counted (docs/17 row 423)', async () => {
+    const user = userEvent.setup();
+    const base = moduleFixture();
+    // The harbor plus one levelled encounter the module links.
+    const module: Module = {
+      ...base,
+      entityKinds: [
+        ...base.entityKinds,
+        { name: 'Ash Fight', kind: 'encounter', absorbed: [], levelHint: 3 },
+      ],
+      parts: base.parts.map((part, index) =>
+        index === 0 ? { ...part, markdown: `${part.markdown} [[Ash Fight]]` } : part,
+      ),
+    };
+    const MAP = '00000000-0000-4000-8000-0000000000aa';
+    const blank = createArtifact({
+      campaignId: CAMPAIGN.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ash Fight',
+      summary: 'Goblins at the gate.',
+      body: '',
+    });
+    if (blank.kind !== 'encounter') throw new Error('fixture: not an encounter');
+    // MAPPED — so without row 423 the overwrite would ALSO count a map redraw.
+    const encounter: AnyArtifact = {
+      ...blank,
+      imageIds: [MAP],
+      data: { ...blank.data, layout: adoptionArenaLayout('4:3'), mapImageId: MAP },
+    };
+    const artifacts = [...existing(module), encounter];
+    renderWith(module, artifacts);
+
+    await user.click(screen.getByTestId('generation-battlemaps'));
+    await user.click(screen.getByTestId('generation-overwrite'));
+    const selection = selectGenerationTargets({
+      module,
+      artifacts,
+      kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+      imageKinds: [],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: true, mobPortraits: false },
+      overwrite: true,
+    });
+    // The printed plan IS the run's plan: 3 missing + 3 regenerated details,
+    // and NO battlemap job (the regeneration draws it).
+    expect(selection.totalCount).toBe(6);
+    expect(screen.getByTestId('generation-scope-count').textContent).toBe(
+      '6 jobs — 6 details, 0 images, 0 battlemaps, 0 mob portraits',
+    );
+
+    await user.click(screen.getByTestId('generation-run'));
+    const confirm = screen.getByTestId('generation-wide-confirm');
+    expect(confirm.textContent).toContain('Replace existing work and start 6 generation jobs?');
+    expect(screen.getByTestId('generation-overwrite-counts').textContent).toBe(
+      'Overwrite replaces 3 details.',
+    );
+    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
+      'Regenerating an encounter redraws its battlemap',
+    );
+    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
+      '1 encounter is regenerated completely',
+    );
+    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
+      'the name is kept',
+    );
+    expect(screen.getByTestId('generation-wide-confirm-run').textContent).toBe('Generate 6 jobs');
   });
 });

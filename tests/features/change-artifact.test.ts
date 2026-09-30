@@ -178,6 +178,21 @@ describe('the route is chosen from the resolved artifact kind', () => {
     expect(runEntityBatchMock).not.toHaveBeenCalled();
   });
 
+  it('"everything" forwards the overwrite fresh-prose option unchanged (docs/17 row 423)', async () => {
+    const world = await seedWorld();
+    const encounterId = await seedEncounter(world);
+
+    await changeArtifact({
+      artifactId: encounterId,
+      encounter: { operation: 'everything', freshProse: true },
+    });
+
+    expect(regenerateMock).toHaveBeenCalledWith(encounterId, {
+      redesignProse: false,
+      freshProse: true,
+    });
+  });
+
   it('an entity change reaches the entity engine with the SAME row as its in-place target', async () => {
     const world = await seedWorld();
     const npcId = await seedNpc(world);

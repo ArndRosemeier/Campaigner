@@ -294,7 +294,10 @@ export interface GenerationOverwriteKept {
  *   becomes the cover and the old one is removed once it has landed (owner
  *   decision 2).
  * - `maps`: this module's encounters that already carry a battlemap (only when
- *   Battlemaps is ticked); the redraw replaces the map in one transaction.
+ *   Battlemaps is ticked); the redraw replaces the map in one transaction. An
+ *   encounter in `details` is NOT here: regenerating an encounter redraws its
+ *   map as part of the regeneration (docs/17 row 423), so a second map job
+ *   would draw it twice.
  * - `mobPortraits`: this module's encounters with a roster (only when Mob
  *   portraits is ticked); every creature portrait is regenerated, existing ones
  *   replaced delete-after-replace and missing ones filled.
@@ -347,7 +350,8 @@ export interface GenerationSelection extends LevelNameSelection {
    * re-reported by the image queue's loud missing-artifact failure.
    */
   pendingImages: GenerationTarget[];
-  /** Selected encounters without a battlemap. */
+  /** Selected encounters without a battlemap (never one whose detail the
+   * overwrite regenerates — that regeneration draws its map, docs/17 row 423). */
   maps: GenerationEncounterTarget[];
   /** Selected encounters whose roster still holds portrait work. */
   mobPortraits: GenerationEncounterTarget[];
@@ -452,14 +456,19 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
       return target === undefined ? [] : [{ ...target, artifactId: encounter.id }];
     });
 
-  const maps = withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets);
+  const unmapped = withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets);
   const fillPortraits = withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets);
 
   const overwrite =
     input.overwrite === true
-      ? selectOverwrites({ input, artifacts, selectedTargets: names.targets, levelless, maps, withId })
+      ? selectOverwrites({ input, artifacts, selectedTargets: names.targets, levelless, maps: unmapped, withId })
       : { overwrites: EMPTY_OVERWRITES, needsLevel: [] };
   const { overwrites } = overwrite;
+  // An encounter whose DETAIL the overwrite regenerates gets its map from that
+  // regeneration (docs/17 row 423) — never ALSO a map job (with overwrite off
+  // the set is empty and `maps` is exactly the detector's list).
+  const redrawn = redrawnByDetail(overwrites);
+  const maps = unmapped.filter((target) => !redrawn.has(target.artifactId));
   // An encounter whose portraits the overwrite regenerates (both lanes, missing
   // ones filled too) is not ALSO a fill job: one encounter, one portrait job.
   const regenPortraitIds = new Set(overwrites.mobPortraits.map((target) => target.artifactId));
@@ -605,10 +614,11 @@ function selectOverwrites(options: {
       artifact.kind === 'encounter' && artifact.moduleId === module.id,
   );
   const needMap = new Set(options.maps.map((target) => target.artifactId));
+  const redrawn = redrawnByDetail({ details });
   const maps = input.encounterExtras.battlemaps
     ? options
         .withId(ownEncounters)
-        .filter((target) => !needMap.has(target.artifactId))
+        .filter((target) => !needMap.has(target.artifactId) && !redrawn.has(target.artifactId))
         .sort(compareTargets)
     : [];
   const mobPortraits = input.encounterExtras.mobPortraits
@@ -618,6 +628,19 @@ function selectOverwrites(options: {
     : [];
 
   return { overwrites: { details, images, maps, mobPortraits, kept }, needsLevel };
+}
+
+/**
+ * The encounters whose DETAIL an overwrite regenerates — each one's regeneration
+ * redraws its battlemap (docs/17 row 423), so it is in neither map set. The ONE
+ * spelling of that exclusion (both map sets and the dialog's sentence read it).
+ */
+export function redrawnByDetail(overwrites: Pick<GenerationOverwrites, 'details'>): Set<Id> {
+  return new Set(
+    overwrites.details
+      .filter((target) => target.kind === 'encounter')
+      .map((target) => target.artifactId),
+  );
 }
 
 /** The dialog's human label for a kind (the domain's own singular labels). */

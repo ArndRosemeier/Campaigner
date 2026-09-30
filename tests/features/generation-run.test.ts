@@ -562,7 +562,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
     expect(report.regenerated).toBe(0);
   });
 
-  it('an existing encounter goes through changeArtifact repopulate; its cover, map and portraits are REPLACED', async () => {
+  it('an existing encounter is REGENERATED IN FULL through changeArtifact (fresh prose, name kept) — its map comes from that regeneration, never a second map job (docs/17 row 423)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = moduleFixture(campaign.id, true);
     await saveModule(module);
@@ -604,11 +604,24 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
           notices: [],
         }),
     );
-    changeArtifactMock.mockResolvedValue({
-      status: 'changed',
-      artifactId: encounter.id,
-      kind: 'encounter',
-      operation: 'encounter-repopulate',
+    // The regeneration, faked at its boundary: it WRITES a new roster, layout
+    // and map onto the SAME row (what "regenerate everything" does), so the
+    // portrait half below can be seen reading the REGENERATED roster.
+    changeArtifactMock.mockImplementation(async () => {
+      await updateArtifact(encounter.id, {
+        data: {
+          ...ENCOUNTER_DATA,
+          monsters: [{ name: 'Fresh Ogre', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+          layout: adoptionArenaLayout('4:3'),
+          mapImageId: '00000000-0000-4000-8000-0000000fe5e1',
+        },
+      });
+      return {
+        status: 'changed',
+        artifactId: encounter.id,
+        kind: 'encounter',
+        operation: 'encounter-regenerate-everything',
+      };
     });
 
     const report = await run(campaign, module, {
@@ -620,35 +633,39 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
     });
 
     // The encounter is NOT an entity-batch target: it is regenerated through the
-    // ONE change seam, with the encounter's own non-map operation.
+    // ONE change seam — the FULL regeneration with fresh prose, the name kept
+    // (no `redesignProse`, which renames).
     expect(runEntityBatchMock).toHaveBeenCalledTimes(1);
     expect(runEntityBatchMock.mock.calls[0]?.[0]).toMatchObject({ kind: 'npc' });
     expect(changeArtifactMock).toHaveBeenCalledWith({
       artifactId: encounter.id,
-      encounter: { operation: 'repopulate' },
+      encounter: { operation: 'everything', freshProse: true },
     });
     expect(report.regenerated).toBe(2);
-    // Images, maps and portraits go through the REPLACING entries as regen jobs.
+    // Images and portraits go through the REPLACING entries as regen jobs.
     expect(enqueueImageJobs).not.toHaveBeenCalled();
     expect(replaceImageJobs).toHaveBeenCalledWith([
       { campaignId: campaign.id, moduleId: module.id, name: 'Kael', regen: true },
     ]);
+    // NO map job at all, although Battlemaps is ticked: the regeneration drew
+    // the fresh map, a second job would draw it twice.
     expect(enqueueEncounterMaps).not.toHaveBeenCalled();
-    expect(replaceEncounterMaps).toHaveBeenCalledWith([
-      {
-        campaignId: campaign.id,
-        moduleId: module.id,
-        artifactId: encounter.id,
-        name: 'Ash Fight',
-        regen: true,
-      },
-    ]);
+    expect(replaceEncounterMaps).not.toHaveBeenCalled();
+    expect(report.mapJobs).toBe(0);
+    expect(report.notes).toContain('battlemaps were NOT queued — each regenerated encounter redrew its own');
+    // The portraits run AFTER the regeneration, on the REGENERATED roster.
     expect(enqueuePortraitFill).not.toHaveBeenCalled();
     expect(regeneratePortraits).toHaveBeenCalledTimes(1);
-    expect(regeneratePortraits.mock.calls[0]?.[0]).toMatchObject({ id: encounter.id });
+    expect(regeneratePortraits.mock.calls[0]?.[0]).toMatchObject({
+      id: encounter.id,
+      data: { monsters: [expect.objectContaining({ name: 'Fresh Ogre' })] },
+    });
     expect(report.imageJobs).toBe(1);
-    expect(report.mapJobs).toBe(1);
     expect(report.portraitJobs).toBe(2);
+    // The printed plan is the run's own count: the selection the run used
+    // counts no map job for the regenerated encounter either.
+    expect(report.selection.overwrites.maps).toEqual([]);
+    expect(report.selection.maps).toEqual([]);
   });
 
   it('a Stop between encounters ends the overwrite without reporting the stop as a failure', async () => {

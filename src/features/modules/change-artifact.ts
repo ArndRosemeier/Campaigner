@@ -102,6 +102,9 @@ export interface EncounterChangeOptions {
   /** The "Also redesign name and prose" checkbox (default OFF) — the
    * existing option, forwarded unchanged. */
   redesignProse?: boolean;
+  /** Fresh prose with the name KEPT (the generation overwrite, docs/17 row
+   * 423) — `EncounterRegenOptions.freshProse`, forwarded unchanged. */
+  freshProse?: boolean;
   /** The D18 per-run dungeon-map path for `'everything'` on a complex —
    * the existing option, forwarded unchanged (null = no override). */
   dungeonMapPath?: DungeonMapPath | null;
@@ -332,6 +335,7 @@ async function changeEncounterArtifact(
 ): Promise<ChangeArtifactResult> {
   const options = {
     redesignProse: requested.redesignProse ?? false,
+    ...(requested.freshProse === true ? { freshProse: true } : {}),
     ...(requested.dungeonMapPath === undefined
       ? {}
       : { dungeonMapPath: requested.dungeonMapPath }),
