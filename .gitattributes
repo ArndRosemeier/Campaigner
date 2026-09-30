@@ -1,4 +1,0 @@
-# Every text file is LF in every working copy, whatever the host's core.autocrlf
-# (docs/17 row 426): prompt goldens, version.json and the board are compared
-# byte for byte, and a Windows checkout converted them to CRLF.
-* text=auto eol=lf

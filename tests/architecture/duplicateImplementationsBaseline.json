@@ -1,5 +1,0 @@
-{
-  "note": "DEBT, NOT A LICENCE. One entry per duplicate group the tripwire found in src/ at base 7b390de. Folding a copy FORCES its entry out: tests/architecture/no-duplicate-implementations.test.ts reds BY NAME on any entry whose sites no longer match the tree (folded, renamed or moved), so a stale blessing cannot survive. Never add an entry to make a new duplicate green; baseline one only with a written reason and a named fold slice.",
-  "scope": "Every src/**/*.ts and src/**/*.tsx file, with NO path excluded (tests/ is out of scope by design: fixtures repeat legitimately). Floor: 75 normalized characters. See the test's doc comment for the normalization, why the floor is 75 rather than 120, and what the tripwire cannot see (paraphrases and bodies under the floor).",
-  "groups": []
-}
