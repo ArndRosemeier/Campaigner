@@ -6,7 +6,8 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import { RangeSetBuilder, type Extension } from '@codemirror/state';
-import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
+import type { AnyArtifact, Id, ModuleEntityKind, WikiLinkCreature } from '@/domain';
+import { undetailedLinkTitle } from '@/domain/undetailedLinkTitle';
 import { levelOfSeparatorLine } from '@/domain/moduleDocument';
 import { WIKI_LINK_PATTERN, resolveWikiLink } from '@/lib/wikilinks';
 import { cn } from '@/lib/utils';
@@ -74,11 +75,18 @@ export function wikiMarkClassFor(
   );
 }
 
+/** What the editor knows beyond the pool: library creatures (docs/11 D10) and
+ * the module's own records for its linked names (docs/17 row 417). */
+export interface WikiDecorationContext {
+  creatures?: readonly WikiLinkCreature[] | undefined;
+  entityKinds?: readonly ModuleEntityKind[] | undefined;
+}
+
 function buildWikiDecorations(
   view: EditorView,
   artifacts: readonly AnyArtifact[],
   moduleId: Id | undefined,
-  creatures: readonly WikiLinkCreature[] | undefined,
+  { creatures, entityKinds }: WikiDecorationContext,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   for (const { from, to } of view.visibleRanges) {
@@ -110,7 +118,7 @@ function buildWikiDecorations(
                   ? resolution.artifact.name
                   : resolution.creature !== undefined
                     ? `${resolution.creature.name} — a library creature (the citation is the reference)`
-                    : `${name} — not detailed yet`,
+                    : undetailedLinkTitle(name, entityKinds),
           },
         }),
       );
@@ -127,17 +135,17 @@ function buildWikiDecorations(
 export function wikiLinkDecorations(
   artifacts: readonly AnyArtifact[],
   moduleId: Id | undefined,
-  creatures?: readonly WikiLinkCreature[],
+  context: WikiDecorationContext = {},
 ): Extension {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = buildWikiDecorations(view, artifacts, moduleId, creatures);
+        this.decorations = buildWikiDecorations(view, artifacts, moduleId, context);
       }
       update(update: ViewUpdate): void {
         if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildWikiDecorations(update.view, artifacts, moduleId, creatures);
+          this.decorations = buildWikiDecorations(update.view, artifacts, moduleId, context);
         }
       }
     },

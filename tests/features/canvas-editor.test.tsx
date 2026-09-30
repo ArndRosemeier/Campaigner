@@ -4,7 +4,7 @@ import { EditorView, keymap } from '@codemirror/view';
 import { cursorCharForward, defaultKeymap, history, historyKeymap, undo } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 
-import type { AnyArtifact, Artifact, Id } from '@/domain';
+import type { AnyArtifact, Artifact, Id, ModuleEntityKind } from '@/domain';
 import {
   acceptSuggestion,
   acceptSuggestionAtCursor,
@@ -63,7 +63,10 @@ function makeNote(fields: { name: string; moduleId?: string | null }): Artifact 
 
 const MODULE_ID = '11111111-1111-4111-8111-111111111111' as Id;
 
-function extensions(artifacts: readonly AnyArtifact[]): Extension[] {
+function extensions(
+  artifacts: readonly AnyArtifact[],
+  entityKinds?: readonly ModuleEntityKind[],
+): Extension[] {
   return [
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -72,21 +75,21 @@ function extensions(artifacts: readonly AnyArtifact[]): Extension[] {
     // them with a safe fallback — a missing field renders nothing).
     canvasSuggestionField,
     canvasShowPreviousField,
-    wikiLinkDecorations(artifacts, MODULE_ID),
+    wikiLinkDecorations(artifacts, MODULE_ID, { entityKinds }),
     suggestionDecorations(),
   ];
 }
 
 function mountEditor(
   doc: string,
-  options: { artifacts?: readonly AnyArtifact[] } = {},
+  options: { artifacts?: readonly AnyArtifact[]; entityKinds?: readonly ModuleEntityKind[] } = {},
 ): { view: EditorView; host: HTMLElement } {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const view = new EditorView({
     state: EditorState.create({
       doc,
-      extensions: extensions(options.artifacts ?? []),
+      extensions: extensions(options.artifacts ?? [], options.entityKinds),
     }),
     parent: host,
   });
@@ -167,6 +170,20 @@ describe('wiki-link decorations', () => {
       expect(chip?.getAttribute('data-wiki-status')).toBe('unresolved');
       expect(chip?.className).toContain('border-dashed');
       expect(view.state.doc.toString()).toBe('The [[Ghost Name]] lurks.');
+    } finally {
+      view.destroy();
+      host.remove();
+    }
+  });
+
+  it("an unresolved link's hover states what the module records for it (docs/17 row 417)", () => {
+    const { host, view } = mountEditor('Ask [[Kael]] at the gate.', {
+      artifacts: [],
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 3 }],
+    });
+    try {
+      const chip = host.querySelector('[data-wiki-name="Kael"]');
+      expect(chip?.getAttribute('title')).toBe('Kael — not detailed yet\nKind: NPC\nLevel: 3');
     } finally {
       view.destroy();
       host.remove();

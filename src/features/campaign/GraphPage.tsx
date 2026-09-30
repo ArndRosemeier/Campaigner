@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeftIcon } from 'lucide-react';
 
 import { ROUTES, artifactPath, modulePath, workspacePath } from '@/app/routes';
-import { ARTIFACT_KINDS, ARTIFACT_KIND_LABELS, type ArtifactKind } from '@/domain';
+import { ARTIFACT_KINDS, ARTIFACT_KIND_LABELS, undetailedLinkTitle, type ArtifactKind } from '@/domain';
 import {
   buildWikiGraph,
   type WikiGraphKindFilter,
@@ -332,7 +332,7 @@ export function GraphPage(): JSX.Element {
                       {node.group === 'module'
                         ? `Module — ${node.label}`
                         : node.group === 'phantom'
-                          ? `${node.label} — not detailed yet`
+                          ? undetailedLinkTitle(node.label, undefined)
                           : `${ARTIFACT_KIND_LABELS[node.group]} — ${node.label}`}
                     </title>
                   </g>

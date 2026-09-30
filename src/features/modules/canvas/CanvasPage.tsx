@@ -1733,6 +1733,7 @@ export function CanvasPage(): JSX.Element {
             initialMarkdown={mountDoc ?? initialDoc}
             artifacts={pool}
             moduleId={currentModule.id}
+            entityKinds={currentModule.entityKinds}
             replacement={lastReplacement}
             onChange={(doc) => {
               setDocText(doc);

@@ -306,6 +306,7 @@ export function CanvasPreview({
                 value={section.text === '' ? '*Nothing written yet.*' : section.text}
                 artifacts={artifacts}
                 moduleId={moduleId}
+                entityKinds={module.entityKinds}
                 onOpenArtifact={onOpenArtifact}
                 highlight={
                   highlights?.find((entry) => entry.planIndex === section.planIndex)?.ranges

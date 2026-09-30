@@ -753,9 +753,23 @@ export function entityKindFor(
   entityKinds: readonly ModuleEntityKind[],
   name: string,
 ): EntityKind | undefined {
-  const target = name.trim().toLowerCase();
-  if (target === '') return undefined;
-  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.kind;
+  return entityRecordFor(entityKinds, name)?.kind;
+}
+
+/**
+ * THE ONE lookup of the RECORD the module keeps for one linked name (docs/17
+ * row 417) — every per-field read below (`entityKindFor`, the bestiary slot,
+ * the intent, the level hint) and the undetailed chip's tooltip go through it,
+ * so they can never disagree about which record a name has. Matching is the
+ * ONE name comparison (`sameAliasName`, docs/17 row 166); an empty name has no
+ * record.
+ */
+export function entityRecordFor(
+  entityKinds: readonly ModuleEntityKind[],
+  name: string,
+): ModuleEntityKind | undefined {
+  if (name.trim() === '') return undefined;
+  return entityKinds.find((entry) => sameAliasName(entry.name, name));
 }
 
 /**
@@ -770,9 +784,7 @@ export function bestiarySlotForEntity(
   entityKinds: readonly ModuleEntityKind[],
   name: string,
 ): EntityBestiarySlot | null {
-  const target = name.trim().toLowerCase();
-  if (target === '') return null;
-  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.bestiary ?? null;
+  return entityRecordFor(entityKinds, name)?.bestiary ?? null;
 }
 
 /**
@@ -794,9 +806,7 @@ export function entityIntentFor(
   entityKinds: readonly ModuleEntityKind[],
   name: string,
 ): string | null {
-  const target = name.trim().toLowerCase();
-  if (target === '') return null;
-  const value = entityKinds.find((entry) => sameAliasName(entry.name, name))?.intent?.trim();
+  const value = entityRecordFor(entityKinds, name)?.intent?.trim();
   return value === undefined || value === '' ? null : value;
 }
 
@@ -819,9 +829,7 @@ export function entityLevelHintFor(
   entityKinds: readonly ModuleEntityKind[],
   name: string,
 ): number | null {
-  const target = name.trim().toLowerCase();
-  if (target === '') return null;
-  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.levelHint ?? null;
+  return entityRecordFor(entityKinds, name)?.levelHint ?? null;
 }
 
 /**

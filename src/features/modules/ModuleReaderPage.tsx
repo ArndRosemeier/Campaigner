@@ -34,6 +34,7 @@ import type {
   Id,
   Module,
   ModuleDocumentSection,
+  ModuleEntityKind,
   ModulePart,
 } from '@/domain';
 import {
@@ -692,6 +693,7 @@ export function ModuleReaderPage(): JSX.Element {
                   writerModel={module.spine.writerModel}
                   artifacts={readerArtifacts}
                   moduleId={module.id}
+                  entityKinds={module.entityKinds}
                   onOpenArtifact={openArtifact}
                   onStub={openStub}
                 />
@@ -722,6 +724,7 @@ export function ModuleReaderPage(): JSX.Element {
                       planTitle={title}
                       artifacts={readerArtifacts}
                       moduleId={module.id}
+                      entityKinds={module.entityKinds}
                       editing={editPartIndex === planIndex}
                       editDraft={editDraft}
                       onEditDraftChange={changeEditDraft}
@@ -955,6 +958,7 @@ const IntroBlock = memo(function IntroBlock({
   writerModel,
   artifacts,
   moduleId,
+  entityKinds,
   onOpenArtifact,
   onStub,
 }: {
@@ -962,6 +966,7 @@ const IntroBlock = memo(function IntroBlock({
   writerModel: string;
   artifacts: readonly AnyArtifact[];
   moduleId: Id;
+  entityKinds: readonly ModuleEntityKind[];
   onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
 }): JSX.Element {
@@ -974,6 +979,7 @@ const IntroBlock = memo(function IntroBlock({
         value={premise}
         artifacts={artifacts}
         moduleId={moduleId}
+        entityKinds={entityKinds}
         onOpenArtifact={onOpenArtifact}
         onStub={onStub}
       />
@@ -1048,6 +1054,7 @@ const PartBody = memo(function PartBody({
   planTitle,
   artifacts,
   moduleId,
+  entityKinds,
   editing,
   editDraft,
   onEditDraftChange,
@@ -1064,6 +1071,7 @@ const PartBody = memo(function PartBody({
   level: number;
   planTitle: string;
   artifacts: readonly AnyArtifact[];
+  entityKinds: readonly ModuleEntityKind[];
   moduleId: Id;
   editing: boolean;
   editDraft: string;
@@ -1129,6 +1137,7 @@ const PartBody = memo(function PartBody({
         value={part.markdown}
         artifacts={artifacts}
         moduleId={moduleId}
+        entityKinds={entityKinds}
         onOpenArtifact={onOpenArtifact}
         onStub={onStub}
       />

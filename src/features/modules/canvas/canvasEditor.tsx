@@ -4,7 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import type { AnyArtifact, Id } from '@/domain';
+import type { AnyArtifact, Id, ModuleEntityKind } from '@/domain';
 import { canvasTheme } from '@/features/modules/canvas/canvasTheme';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import {
@@ -48,6 +48,9 @@ export interface CanvasEditorProps {
   initialMarkdown: string;
   artifacts: readonly AnyArtifact[];
   moduleId: Id | undefined;
+  /** The module's records for its linked names — the undetailed-link hover
+   * states what they already say (docs/17 row 417). */
+  entityKinds?: readonly ModuleEntityKind[] | undefined;
   /** Doc string changed (every keystroke) — the page tracks dirty state. */
   onChange?: (doc: string) => void;
   /** Suggestion accepted through the in-editor Accept control (or Mod-y). */
@@ -94,6 +97,7 @@ export function CanvasEditor({
   initialMarkdown,
   artifacts,
   moduleId,
+  entityKinds,
   onChange,
   onSuggestionAccepted,
   onSuggestionInvalidated,
@@ -172,7 +176,7 @@ export function CanvasEditor({
           canvasSuggestionField,
           canvasShowPreviousField,
           lastReplacementField,
-          wikiLinkDecorations(artifacts, moduleId),
+          wikiLinkDecorations(artifacts, moduleId, { entityKinds }),
           levelDividerDecorations(),
           suggestionDecorations(),
           lastReplacementDecorations(),

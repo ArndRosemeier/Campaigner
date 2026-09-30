@@ -233,7 +233,8 @@ describe('ModuleReaderPage', () => {
     expect(unresolvedChip).toHaveAttribute('data-wiki-raw', '[[Missing Person]]');
     expect(unresolvedChip).toHaveAttribute(
       'title',
-      '[[Missing Person]] — Missing Person — not detailed yet',
+      // The reader passes the module's records (docs/17 row 417): none for this name.
+      '[[Missing Person]] — Missing Person — not detailed yet\nKind: not recorded yet — Generate details classifies it',
     );
 
     // Part sections carry the plan titles as H1s; part 0 shows its markdown.

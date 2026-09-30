@@ -23,6 +23,7 @@ export * from '@/domain/image';
 export * from '@/domain/ideaBoard';
 export * from '@/domain/itemData';
 export * from '@/domain/module';
+export * from '@/domain/undetailedLinkTitle';
 export * from '@/domain/moduleDifficulty';
 export * from '@/domain/moduleDocument';
 export * from '@/domain/levelProblems';

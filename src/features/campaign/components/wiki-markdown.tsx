@@ -3,7 +3,8 @@ import type { JSX, ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import type { AnyArtifact, ArtifactKind, Id } from '@/domain';
+import type { AnyArtifact, ArtifactKind, Id, ModuleEntityKind } from '@/domain';
+import { undetailedLinkTitle } from '@/domain/undetailedLinkTitle';
 import { CHIP_UNRESOLVED, Chip, KIND_CHIP_CLASSES } from '@/components/chip';
 import { ImageThumb } from '@/features/images/image-thumb';
 import { remarkWikiLinks, WIKI_RAW_ATTRIBUTE } from '@/lib/remark-wikilinks';
@@ -59,6 +60,10 @@ export interface WikiMarkdownProps {
    * position, for popover placement. Omit → inert chip.
    */
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
+  /** The owning module's records for its linked names: an undetailed chip's
+   * hover states what they already say (docs/17 row 417). Omit → the hover
+   * says only that the name is not detailed. */
+  entityKinds?: readonly ModuleEntityKind[] | undefined;
   className?: string | undefined;
   /**
    * Last-replacement highlight (canvas preview): offsets into `value`
@@ -93,16 +98,17 @@ export const WikiMarkdown = memo(function WikiMarkdown({
   moduleId,
   onOpenArtifact,
   onStub,
+  entityKinds,
   className,
   highlight,
   sourceOffsets,
 }: WikiMarkdownProps): JSX.Element {
   const components = useMemo(
     () => ({
-      a: wikiAnchorComponent({ artifacts, moduleId, onOpenArtifact, onStub }),
+      a: wikiAnchorComponent({ artifacts, moduleId, onOpenArtifact, onStub, entityKinds }),
       table: WikiTable,
     }),
-    [artifacts, moduleId, onOpenArtifact, onStub],
+    [artifacts, moduleId, onOpenArtifact, onStub, entityKinds],
   );
 
   // The last-replacement range, clamped to the value (an out-of-range or
@@ -179,12 +185,17 @@ function WikiTable({ children }: { children?: ReactNode }): JSX.Element {
 const TABLE_CLASSES =
   'w-full border-collapse text-left text-sm [&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-2 [&_th]:py-1 [&_th]:align-top [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_td]:align-top';
 
-function wikiAnchorComponent(context: {
+/** What a chip needs beyond its own token: the pool, the module, the click
+ * handlers and the module's records (one type for the anchor and the chip). */
+interface WikiChipContext {
   artifacts: readonly AnyArtifact[];
   moduleId?: Id | undefined;
   onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
-}): (props: WikiAnchorProps) => JSX.Element {
+  entityKinds?: readonly ModuleEntityKind[] | undefined;
+}
+
+function wikiAnchorComponent(context: WikiChipContext): (props: WikiAnchorProps) => JSX.Element {
   return function WikiAnchor(props: WikiAnchorProps) {
     const { href, children } = props;
     // The byte-exact token the link was written from, carried by
@@ -233,14 +244,9 @@ function WikiChip({
   name: string;
   display: string;
   raw: string | undefined;
-  context: {
-    artifacts: readonly AnyArtifact[];
-    moduleId?: Id | undefined;
-    onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
-    onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
-  };
+  context: WikiChipContext;
 }): JSX.Element {
-  const { artifacts, moduleId, onOpenArtifact, onStub } = context;
+  const { artifacts, moduleId, onOpenArtifact, onStub, entityKinds } = context;
   const resolution = resolveWikiLink(name, artifacts, moduleId === undefined ? undefined : { moduleId });
 
   if (resolution.status === 'unresolved' || resolution.artifact === undefined) {
@@ -251,7 +257,7 @@ function WikiChip({
         data-wiki-raw={raw}
         tone={CHIP_UNRESOLVED}
         className={onStub === undefined ? 'cursor-default' : undefined}
-        title={wikiChipTitle(raw, `${name} — not detailed yet`)}
+        title={wikiChipTitle(raw, undetailedLinkTitle(name, entityKinds))}
         onClick={
           onStub === undefined
             ? undefined

@@ -187,7 +187,9 @@ describe('preview default + full width + live chat', () => {
     expect(chip).toHaveAttribute('data-wiki-raw', '[[Keeper Ilse]]');
     expect(chip).toHaveAttribute(
       'title',
-      '[[Keeper Ilse]] — Keeper Ilse — not detailed yet',
+      // The preview passes the module's records (docs/17 row 417): this name has
+      // none, and the hover says so rather than staying silent.
+      '[[Keeper Ilse]] — Keeper Ilse — not detailed yet\nKind: not recorded yet — Generate details classifies it',
     );
     await flushAsyncUpdates();
   });

@@ -173,7 +173,10 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
         // is what reds a hand-rolled second comparison either of them could grow.
         // 6: docs/17 row 401 added the ONE level-statement writer
         // (`withEntityLevelStatement`), which finds its record through this seam.
-        ['sameAliasName(', 6],
+        // 3: docs/17 row 417 folded the four per-field record reads (kind,
+        // bestiary slot, intent, level hint) onto ONE `entityRecordFor`, so four
+        // identical `find(sameAliasName…)` calls became one.
+        ['sameAliasName(', 3],
         // 2 was row 166's creature half; row 167 folded the bestiary-slot
         // source map's three keys on the comparable form (+3 — sameSlot's
         // creature line carries two occurrences on one line).
