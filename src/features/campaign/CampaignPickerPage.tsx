@@ -7,7 +7,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import { documentPath, workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
-import { GAME_SYSTEM_LABELS } from '@/domain';
+import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain';
+import { GameSystemSelect } from '@/components/game-system-select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,7 +49,11 @@ import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { Input } from '@/components/ui/input';
-import { createCampaignAndChatPath, NEW_CAMPAIGN_NAME } from '@/features/campaign/start-campaign-chat';
+import {
+  createCampaignAndChatPath,
+  DEFAULT_CAMPAIGN_SYSTEM,
+  NEW_CAMPAIGN_NAME,
+} from '@/features/campaign/start-campaign-chat';
 
 /**
  * Campaign picker (05-UI §Campaign picker): card grid of campaigns (name,
@@ -75,9 +80,10 @@ export function CampaignPickerPage(): JSX.Element {
   const settings = useLiveQuery(() => readSettings(), []);
   const openWizard = useOnboardingStore((state) => state.openWizard);
   const [newName, setNewName] = useState('');
+  const [newSystem, setNewSystem] = useState<GameSystem>(DEFAULT_CAMPAIGN_SYSTEM);
   async function handleCreate(): Promise<void> {
     try {
-      navigate(await createCampaignAndChatPath(newName));
+      navigate(await createCampaignAndChatPath(newName, newSystem));
     } catch (error) {
       toastError('Could not create campaign', error);
     }
@@ -153,6 +159,14 @@ export function CampaignPickerPage(): JSX.Element {
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void handleCreate();
               }}
+            />
+            {/* The system is fixed after creation, so it is chosen here (docs/17 row 416). */}
+            <GameSystemSelect
+              value={newSystem}
+              onChange={setNewSystem}
+              ariaLabel="New campaign game system"
+              triggerClassName="h-8 w-40 text-sm"
+              testId="new-campaign-system"
             />
             <Button
               onClick={() => {

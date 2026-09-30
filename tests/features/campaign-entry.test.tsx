@@ -116,6 +116,19 @@ describe('New campaign lands in the chat', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('the system picked beside the button is the campaign system (row 416); untouched it is Generic d20', async () => {
+    const user = mountPicker();
+    const picker = await screen.findByTestId('new-campaign-system');
+    expect(picker.textContent).toContain('Generic d20');
+    await user.click(picker);
+    await user.click(screen.getByRole('option', { name: 'Pathfinder 2e' }));
+    await user.type(screen.getByTestId('new-campaign-name'), 'Abomination Vaults{Enter}');
+    await screen.findByTestId('where');
+    const campaigns = await actDrained(() => listCampaigns());
+    expect(campaigns.map((c) => [c.name, c.system])).toEqual([['Abomination Vaults', 'pathfinder2e']]);
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('a whitespace-only field creates "New campaign"', async () => {
     const user = mountPicker();
     await user.type(await screen.findByTestId('new-campaign-name'), '   ');

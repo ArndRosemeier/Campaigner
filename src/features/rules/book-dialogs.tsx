@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { GAME_SYSTEMS, GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
+import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import type { Rulebook } from '@/domain/rulebook';
 import {
   AlertDialog,
@@ -22,13 +22,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { GameSystemSelect } from '@/components/game-system-select';
 import { deleteRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -159,24 +153,12 @@ function SystemDialog({
             <DialogDescription>Used by personas when interpreting this book.</DialogDescription>
           </DialogHeader>
           <div className="my-3">
-            <Select
+            <GameSystemSelect
               value={system}
-              items={GAME_SYSTEM_LABELS}
-              onValueChange={(value) => {
-                if (value !== null) setSystem(value);
-              }}
-            >
-              <SelectTrigger className="w-full" aria-label="Game system">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {GAME_SYSTEMS.map((gameSystem) => (
-                  <SelectItem key={gameSystem} value={gameSystem}>
-                    {GAME_SYSTEM_LABELS[gameSystem]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={setSystem}
+              ariaLabel="Game system"
+              triggerClassName="w-full"
+            />
           </div>
           <DialogFooter>
             <Button

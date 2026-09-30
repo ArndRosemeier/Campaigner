@@ -5,7 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { MapPinnedIcon, SkullIcon, TriangleAlertIcon } from 'lucide-react';
 
 import type { Id, RuleChunk, StatBlock } from '@/domain';
-import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
+import { type GameSystem } from '@/domain/gameSystem';
 import { listChunksByBooks } from '@/db/chunkRepo';
 import { listReadyRulebooks } from '@/db/rulebookRepo';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
@@ -18,13 +18,7 @@ import {
 import { SpawnModulePicker, type SpawnCreature } from '@/features/bestiary/spawn-dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { GameSystemSelect } from '@/components/game-system-select';
 
 /**
  * Bestiary roster tab (source-viewers arc; 12-BESTIARY-PACKS): every ready
@@ -100,25 +94,14 @@ export function BestiaryRoster(): JSX.Element {
             setQuery(event.target.value);
           }}
         />
-        <Select
+        <GameSystemSelect
           value={system}
-          onValueChange={(value) => {
-            if (value === null) return;
-            setSystem(value);
-          }}
-        >
-          <SelectTrigger className="h-8 w-44 text-sm" aria-label="Filter by game system" data-testid="roster-system-select">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All systems</SelectItem>
-            {(Object.keys(GAME_SYSTEM_LABELS) as GameSystem[]).map((key) => (
-              <SelectItem key={key} value={key}>
-                {GAME_SYSTEM_LABELS[key]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          allLabel="All systems"
+          onChange={setSystem}
+          ariaLabel="Filter by game system"
+          triggerClassName="h-8 w-44 text-sm"
+          testId="roster-system-select"
+        />
         <span className="flex-1" />
         <span className="text-xs text-muted-foreground" data-testid="roster-count">
           {String(rows.filter((row) => row.kind === 'entry').length)} creatures
