@@ -250,41 +250,53 @@ export function selectLevelNames(
 }
 
 /**
- * WHAT an overwrite run replaces — one lane per kind of work, each INDEPENDENT
- * (docs/17 row 429, owner-reported). Before this the lanes were borrowed from
- * the ADDITIVE controls: the image lane read `kinds ∩ imageKinds`, so a kind had
- * to be ticked in "Also generate an image for" before its images could be
- * replaced, and the map/portrait lanes read the Encounter-extras boxes. That
- * made "redo only the images" INEXPRESSIBLE — unticking Kinds to spare the
- * details emptied the image lane too, so nothing was selected and Generate
- * stayed grey. The owner, verbatim: *"if i just want to overwrite all the images
- * i can not do that, button is grey until i select a kind. Which would be wrong
- * since i only want to redo images."*
+ * WHAT a change run replaces — ONE PER-KIND CHOICE OF WORK, plus the encounter
+ * extras (docs/17 row 431, owner-directed).
+ *
+ * THE SCOPE IS ITS OWN. This is the second, sibling half of the seam: the
+ * GENERATION half answers "what is MISSING?" from `kinds` + `imageKinds` +
+ * `encounterExtras`, while this one answers "what already EXISTS and should be
+ * redone?" from its OWN kind lists. Its kinds take part in the level-scoped name
+ * selection even when `kinds` is empty, which is what makes the Change dialog a
+ * scope of its own — the owner, after the lanes landed: *"not having a kind
+ * ticked gives this: 'Nothing selected — tick a kind or widen the level range.'
+ * and a grey button that does not work … Lets do a sibling dialog just for
+ * changes. Keep all the change work out of the generation dialog and leave it to
+ * do just that, generate things that are not there."* Ticking "Images" for every
+ * kind and nothing else is therefore a complete answer.
  */
-export interface GenerationOverwriteScope {
-  /** Regenerate the selected kinds' existing detail text in place. */
-  details: boolean;
-  /** Replace every existing cover of the selected kinds. */
-  images: boolean;
-  /** Redraw the selected encounters' existing battlemaps. */
+export interface GenerationChangeScope {
+  /** Kinds whose existing detail TEXT is regenerated in place. */
+  texts: readonly EntityKind[];
+  /** Kinds whose existing COVER is replaced. */
+  images: readonly EntityKind[];
+  /** The selected encounters' existing battlemaps are redrawn. */
   battlemaps: boolean;
-  /** Regenerate the selected encounters' existing mob portraits. */
+  /** The selected encounters' existing mob portraits are regenerated. */
   mobPortraits: boolean;
 }
 
-/** Every lane off: the additive run (nothing is replaced). */
-export const NO_OVERWRITE_LANES: GenerationOverwriteScope = {
-  details: false,
-  images: false,
+/** Nothing asked for: the additive run (nothing is replaced). */
+export const NO_CHANGE_SCOPE: GenerationChangeScope = {
+  texts: [],
+  images: [],
   battlemaps: false,
   mobPortraits: false,
 };
 
-/** Does any lane ask for replacement? THE one "is this an overwrite run?" test. */
-export function overwriteScopeActive(scope: GenerationOverwriteScope | undefined): boolean {
+/** Does the scope ask for anything? THE one "is this a change run?" test. */
+export function changeScopeActive(scope: GenerationChangeScope | undefined): boolean {
   return (
-    scope !== undefined && (scope.details || scope.images || scope.battlemaps || scope.mobPortraits)
+    scope !== undefined &&
+    (scope.texts.length > 0 || scope.images.length > 0 || scope.battlemaps || scope.mobPortraits)
   );
+}
+
+/** The kinds a change scope touches — the encounter extras imply `encounter`. */
+export function changeScopeKinds(scope: GenerationChangeScope): EntityKind[] {
+  const kinds = new Set<EntityKind>([...scope.texts, ...scope.images]);
+  if (scope.battlemaps || scope.mobPortraits) kinds.add('encounter');
+  return [...kinds];
 }
 
 /** What the dialog asks the module-level seam for. */
@@ -298,13 +310,14 @@ export interface GenerationSelectionInput {
   /** The encounter extras the run was asked for (see `GenerationEncounterExtras`). */
   encounterExtras: GenerationEncounterExtras;
   /**
-   * THE OVERWRITE LANES (docs/17 rows 422/429) — the owner's model-evaluation
-   * control, sharpened to ONE INDEPENDENT CHOICE PER KIND OF WORK. Each lane the
-   * scope turns on adds that lane's EXISTING work to `overwrites`; the others
-   * contribute nothing. Absent or all-false is the additive run, and every field
-   * this seam returned before is byte-identical (`overwrites` is then all empty).
+   * THE CHANGE SCOPE (docs/17 rows 422/431) — what the sibling Change dialog
+   * asks this same seam to REDO. It is a scope of its own: its kinds join the
+   * level-scoped name selection even when `kinds` is empty, so "redo every
+   * image" needs no generation kind ticked. Absent or empty is the additive run,
+   * and every field this seam returned before is byte-identical (`overwrites` is
+   * then all empty).
    */
-  overwrite?: GenerationOverwriteScope;
+  change?: GenerationChangeScope;
 }
 
 /** An existing artifact the overwrite run regenerates, and the row it is. */
@@ -321,25 +334,24 @@ export interface GenerationOverwriteKept {
 }
 
 /**
- * What an overwrite run REPLACES (docs/17 row 422), per kind of work. Every
+ * What a CHANGE run replaces (docs/17 rows 422/431), per kind of work. Every
  * list is existing work the additive sets exclude, so no job is counted twice.
  *
- * - `details`: this module's own detailed rows, regenerated IN PLACE (same id,
- *   fresh text, the previous text kept as a revision — owner decision 1).
- * - `images`: rows of a SELECTED kind that carry a COVER (the Images lane, docs/17
- *   row 429 — never the additive image-kind preference); the fresh image
- *   becomes the cover and the old one is removed once it has landed (owner
- *   decision 2).
+ * - `details`: the texts half — this module's own written rows, regenerated IN
+ *   PLACE (same id, fresh text, the previous text kept as a revision).
+ * - `images`: rows of the kinds the images half named that carry a COVER (never
+ *   the additive image-kind preference); the fresh image becomes the cover and
+ *   the old one is removed once it has landed.
  * - `maps`: this module's encounters that already carry a battlemap (only when
- *   the Battlemaps lane is ticked); the redraw replaces the map in one transaction. An
- *   encounter in `details` is NOT here: regenerating an encounter redraws its
- *   map as part of the regeneration (docs/17 row 423), so a second map job
- *   would draw it twice.
+ *   the battlemaps half is ticked); the redraw replaces the map in one
+ *   transaction. An encounter in `details` is NOT here: regenerating an
+ *   encounter redraws its map as part of the regeneration (docs/17 row 423), so
+ *   a second map job would draw it twice.
  * - `mobPortraits`: this module's encounters with a roster (only when the
- *   Mob-portraits lane is ticked); every creature portrait is regenerated, existing ones
- *   replaced delete-after-replace and missing ones filled.
- * - `kept`: detailed names the overwrite does NOT regenerate, with the reason —
- *   never a silent skip.
+ *   mob-portraits half is ticked); every creature portrait is regenerated,
+ *   existing ones replaced delete-after-replace and missing ones filled.
+ * - `kept`: written names the change does NOT redo, with the reason — never a
+ *   silent skip.
  */
 export interface GenerationOverwrites {
   details: GenerationOverwriteTarget[];
@@ -419,8 +431,20 @@ export interface GenerationSelection extends LevelNameSelection {
 export function selectGenerationTargets(input: GenerationSelectionInput): GenerationSelection {
   const { module, kinds, levelRange } = input;
   const entityKinds = kinds;
+  // THE NAME SELECTION COVERS BOTH HALVES' KINDS (docs/17 row 431). The
+  // generation half's kinds are `kinds`; the CHANGE half brings its own, so a
+  // change-only run (`kinds: []`) still resolves the entities it was asked to
+  // redo. Without this, "no kind ticked" meant "nothing selected" — the defect
+  // the owner hit. With no change scope the old path is untouched.
+  const change = input.change;
+  const scopeKinds =
+    change === undefined
+      ? entityKinds
+      : ENTITY_KINDS.filter(
+          (kind) => entityKinds.includes(kind) || changeScopeKinds(change).includes(kind),
+        );
   const list = moduleLevelList(moduleDocumentFromView(module), module.entityKinds);
-  const names = selectLevelNames(list, entityKinds, levelRange);
+  const names = selectLevelNames(list, scopeKinds, levelRange);
 
   // The module-creation pool (docs/17 row 69): the entity name space is the
   // module's own, never the Party's — the SAME pool the batch and the image
@@ -478,6 +502,11 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
 
   // Maps and mob portraits are encounter work: a selected encounter NAME is the
   // scope, and the sweep's own detectors say whether it still needs anything.
+  // The ADDITIVE fill sets are GENERATION work: they belong to the generation
+  // half's `kinds`, while the CHANGE halves reach their own encounters through
+  // the same map below (docs/17 row 431). Gating the MAP itself would starve a
+  // change-only run of the encounter it was asked to redraw.
+  const generationEncounters = entityKinds.includes('encounter');
   const encounters = new Map(
     names.targets
       .filter((target): target is GenerationTarget & { kind: 'encounter' } =>
@@ -493,10 +522,14 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
       return target === undefined ? [] : [{ ...target, artifactId: encounter.id }];
     });
 
-  const unmapped = withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets);
-  const fillPortraits = withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets);
+  const unmapped = generationEncounters
+    ? withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets)
+    : [];
+  const fillPortraits = generationEncounters
+    ? withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets)
+    : [];
 
-  const overwrite = overwriteScopeActive(input.overwrite)
+  const overwrite = changeScopeActive(input.change)
     ? selectOverwrites({ input, artifacts, selectedTargets: names.targets, levelless, maps: unmapped, withId })
     : { overwrites: EMPTY_OVERWRITES, needsLevel: [] };
   const { overwrites } = overwrite;
@@ -596,18 +629,18 @@ function selectOverwrites(options: {
 }): { overwrites: GenerationOverwrites; needsLevel: GenerationTarget[] } {
   const { input, artifacts, selectedTargets, levelless } = options;
   const { module } = input;
-  // THE LANES (docs/17 row 429): each is its own choice, so a run can replace
-  // every existing image and nothing else.
-  const lanes = input.overwrite ?? NO_OVERWRITE_LANES;
+  // THE CHANGE SCOPE (docs/17 row 431): ONE PER-KIND choice of work, so a run can
+  // redo every existing image and nothing else, with no generation kind ticked.
+  const scope = input.change ?? NO_CHANGE_SCOPE;
 
   const details: GenerationOverwriteTarget[] = [];
   const kept: GenerationOverwriteKept[] = [];
   const needsLevel: GenerationTarget[] = [];
-  // THE DETAILS LANE. `kept` and `needsLevel` are its by-products — they explain
-  // what the detail regeneration leaves alone — so a run that does not replace
-  // details has nothing to explain.
-  for (const { target, artifact } of lanes.details
-    ? existingOf(input, artifacts, selectedTargets, input.kinds, batchTargets)
+  // THE TEXTS HALF. `kept` and `needsLevel` are its by-products — they explain
+  // what the text regeneration leaves alone — so a run that does not redo texts
+  // has nothing to explain.
+  for (const { target, artifact } of scope.texts.length > 0
+    ? existingOf(input, artifacts, selectedTargets, scope.texts, batchTargets)
     : []) {
     // STRICT LEVELS (docs/17 row 401) hold for a regeneration exactly as for a
     // creation: a level is stated, never guessed.
@@ -644,9 +677,9 @@ function selectOverwrites(options: {
   // answers "should this kind GET an image", while this lane answers "replace the
   // images that are already there" (docs/17 row 429). Reading it here is exactly
   // what made "only the images" impossible to ask for.
-  const images: GenerationOverwriteTarget[] = lanes.images
-    ? existingOf(input, artifacts, selectedTargets, input.kinds, imageTargets)
-        // What an image overwrite replaces is the COVER: a gallery-only row (an
+  const images: GenerationOverwriteTarget[] = scope.images.length > 0
+    ? existingOf(input, artifacts, selectedTargets, scope.images, imageTargets)
+        // What an image change replaces is the COVER: a gallery-only row (an
         // encounter whose one image is its battlemap) has no cover to replace.
         .filter(({ artifact }) => artifact.coverImageId !== null)
         .map(({ target, artifact }) => ({ ...target, artifactId: artifact.id }))
@@ -659,16 +692,16 @@ function selectOverwrites(options: {
   );
   const needMap = new Set(options.maps.map((target) => target.artifactId));
   const redrawn = redrawnByDetail({ details });
-  // THE MAP AND PORTRAIT LANES read the overwrite's OWN scope, never the
-  // Encounter-extras boxes (docs/17 row 429): "replace this encounter's map" is
-  // a different question from "fill the maps that are missing".
-  const maps = lanes.battlemaps
+  // THE MAP AND PORTRAIT HALVES read the change scope's OWN flags, never the
+  // Encounter-extras boxes (docs/17 row 429): "redraw this encounter's map" is a
+  // different question from "fill the maps that are missing".
+  const maps = scope.battlemaps
     ? options
         .withId(ownEncounters)
         .filter((target) => !needMap.has(target.artifactId) && !redrawn.has(target.artifactId))
         .sort(compareTargets)
     : [];
-  const mobPortraits = lanes.mobPortraits
+  const mobPortraits = scope.mobPortraits
     ? options
         .withId(ownEncounters.filter((encounter) => encounter.data.monsters.length > 0))
         .sort(compareTargets)

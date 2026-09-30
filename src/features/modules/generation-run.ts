@@ -17,7 +17,8 @@ import {
   reportEntityBatchNotices,
 } from '@/features/modules/entity-batch-report';
 import {
-  NO_OVERWRITE_LANES,
+  changeScopeActive,
+  NO_CHANGE_SCOPE,
   redrawnByDetail,
   selectGenerationTargets,
   selectedNameResolves,
@@ -25,7 +26,7 @@ import {
   type GenerationKind,
   type GenerationLevelRange,
   type GenerationEncounterTarget,
-  type GenerationOverwriteScope,
+  type GenerationChangeScope,
   type GenerationOverwriteTarget,
   type GenerationSelection,
   type GenerationTarget,
@@ -114,10 +115,11 @@ export interface GenerationRunInput {
   levelRange: GenerationLevelRange;
   encounterExtras: EncounterExtras;
   /**
-   * The dialog's overwrite LANES (docs/17 rows 422/429); absent or all-false =
-   * off (the additive run). Passed through to the ONE selection seam unchanged.
+   * The CHANGE scope of the sibling Change dialog (docs/17 rows 422/431);
+   * absent or empty = the additive run. Passed through to the ONE selection
+   * seam unchanged.
    */
-  overwrite?: GenerationOverwriteScope;
+  change?: GenerationChangeScope;
 }
 
 /** What one run did (the dialog reports it; the queues carry their own progress). */
@@ -180,6 +182,16 @@ export function generationRunActive(moduleId: string): boolean {
 }
 
 /**
+ * THE ONE "a run is in progress for this module" HOOK (docs/17 rows 419/431).
+ * BOTH dialogs disable on it — Generate and Change — because both start the SAME
+ * run on the SAME dock entry: one run per module, whichever dialog asked.
+ */
+export function useGenerationRunActive(moduleId: string): boolean {
+  const id = generationRunJobId(moduleId);
+  return useProgressStore((state) => state.jobs.some((job) => job.id === id));
+}
+
+/**
  * Runs ONE level-scoped generation selection. The caller supplies the module,
  * the campaign and the page's artifact pool; nothing is read from a stored
  * automation intent.
@@ -188,10 +200,10 @@ export async function runGenerationSelection(
   input: GenerationRunInput,
 ): Promise<GenerationRunReport> {
   const { module, artifacts, kinds, imageKinds, levelRange, encounterExtras } = input;
-  // Normalized to an all-false scope, never `undefined`: the seam's optional
-  // property is exact (exactOptionalPropertyTypes), and "no lanes ticked" and
-  // "no overwrite argument" are the same run.
-  const overwrite = input.overwrite ?? NO_OVERWRITE_LANES;
+  // Normalized to an empty scope, never `undefined`: the seam's optional
+  // property is exact (exactOptionalPropertyTypes), and "nothing ticked" and
+  // "no change argument" are the same run.
+  const change = input.change ?? NO_CHANGE_SCOPE;
   const selection = selectGenerationTargets({
     module,
     artifacts,
@@ -199,7 +211,7 @@ export async function runGenerationSelection(
     imageKinds,
     levelRange,
     encounterExtras,
-    overwrite,
+    change,
   });
   const report: GenerationRunReport = {
     selection,
@@ -230,7 +242,12 @@ export async function runGenerationSelection(
   // starts cannot both pass it; finished when the run settles, however.
   const progress = useProgressStore.getState();
   const entry = generationRunJobId(module.id);
-  progress.start(entry, 'Generate details', 'starting…');
+  // The dock entry names WHICH dialog asked (docs/17 row 431).
+  progress.start(
+    entry,
+    changeScopeActive(input.change) ? 'Change generations' : 'Generate details',
+    'starting…',
+  );
 
   // The module's Web Lock is held for the whole run (docs/17 row 110): the
   // batches plus the enqueues are the app's longest-lived orchestration and a
@@ -254,10 +271,10 @@ async function runSelectionUnlocked(
   gateFirst: boolean,
 ): Promise<GenerationRunReport> {
   const { campaign, kinds, imageKinds, levelRange, encounterExtras } = input;
-  // Normalized to an all-false scope, never `undefined`: the seam's optional
-  // property is exact (exactOptionalPropertyTypes), and "no lanes ticked" and
-  // "no overwrite argument" are the same run.
-  const overwrite = input.overwrite ?? NO_OVERWRITE_LANES;
+  // Normalized to an empty scope, never `undefined`: the seam's optional
+  // property is exact (exactOptionalPropertyTypes), and "nothing ticked" and
+  // "no change argument" are the same run.
+  const change = input.change ?? NO_CHANGE_SCOPE;
   let { module } = input;
   let selection = planned;
   try {
@@ -298,7 +315,7 @@ async function runSelectionUnlocked(
           imageKinds,
           levelRange,
           encounterExtras,
-          overwrite,
+          change,
         });
         report.selection = selection;
       }
@@ -378,7 +395,7 @@ async function runSelectionUnlocked(
       imageKinds,
       levelRange,
       encounterExtras,
-      overwrite,
+      change,
     });
     const replacing = actual.overwrites;
 

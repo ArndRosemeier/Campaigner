@@ -4,9 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createArtifact,
   createCampaign,
-  createModule,
   modulePartSchema,
   moduleSpineSchema,
   type AnyArtifact,
@@ -14,13 +12,10 @@ import {
   type Module,
 } from '@/domain';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
-import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 import { clearDatabase } from '../db/helpers';
+import { moduleDocumentFixture } from '../helpers/moduleDocumentFixture';
 import { GenerationDialog } from '@/features/modules/generation-dialog';
-import {
-  NO_OVERWRITE_LANES,
-  selectGenerationTargets,
-} from '@/features/modules/generation-selection';
+import { selectGenerationTargets } from '@/features/modules/generation-selection';
 import {
   generationRunJobId,
   type GenerationRunInput,
@@ -53,10 +48,13 @@ const runGenerationSelection = vi.fn<
 });
 
 vi.mock('@/features/modules/generation-run', async (importOriginal) => ({
-  // The run's dock-entry id is the REAL one (docs/17 row 419): the dialog
-  // reads the progress store through it.
+  // The run's dock-entry id and the ONE run-active hook are the REAL ones
+  // (docs/17 row 419): the dialog reads the progress store through them, and
+  // BOTH dialogs share the hook since docs/17 row 431.
   generationRunJobId: (await importOriginal<typeof generationRunModule>())
     .generationRunJobId,
+  useGenerationRunActive: (await importOriginal<typeof generationRunModule>())
+    .useGenerationRunActive,
   runGenerationSelection: (input: GenerationRunInput) => runGenerationSelection(input),
 }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
@@ -84,38 +82,15 @@ const ENTITY_KINDS = [
   ...(entry.kind === 'npc' ? { levelHint: 3 } : {}),
 }));
 
+const GENERATION_MODULE_OPTIONS = {
+  campaignId: CAMPAIGN.id,
+  entityKinds: ENTITY_KINDS,
+  premise: 'The harbor hides the [[Drowned Gate]].',
+  sections: SECTIONS,
+};
+
 function moduleFixture(): Module {
-  const base = createModule({
-    campaignId: CAMPAIGN.id,
-    title: 'The Harbor',
-    concept: '',
-    levelMin: 1,
-    levelMax: 3,
-    sizeDial: 'sketch',
-  });
-  return {
-    ...base,
-    entityKinds: ENTITY_KINDS,
-    spine: moduleSpineSchema.parse({
-      premise: 'The harbor hides the [[Drowned Gate]].',
-      themes: [],
-      partPlan: SECTIONS.map((_, index) => ({
-        title: `Level ${String(index + 1)}`,
-        levelBand: String(index + 1),
-        synopsis: '',
-        levelUpTrigger: '',
-      })),
-    }),
-    parts: SECTIONS.map((markdown, planIndex) =>
-      modulePartSchema.parse({
-        planIndex,
-        markdown,
-        status: 'ready',
-        errorMessage: '',
-        edited: false,
-      }),
-    ),
-  };
+  return moduleDocumentFixture(GENERATION_MODULE_OPTIONS);
 }
 
 const ARTIFACTS: readonly AnyArtifact[] = [];
@@ -565,273 +540,5 @@ describe('a ticked kind that produced nothing is NAMED, never a silent finish (d
         'Nothing to generate — every selected entity already has its detail, image and map.',
       );
     });
-  });
-});
-
-/**
- * THE OVERWRITE LANES (docs/17 rows 422/429). The owner asked for *"an overwrite
- * checkbox (with confirmation if there is something to overwrite)"*, and later
- * reported the single switch could not express his case at all: *"if i just want
- * to overwrite all the images i can not do that, button is grey until i select a
- * kind. Which would be wrong since i only want to redo images."* So: every lane
- * is off by default and INDEPENDENT; ticking one is a complete answer; Generate
- * asks ONE question (never a second stacked one) when the seam reports something
- * to replace; Cancel runs nothing.
- */
-describe('the overwrite lanes (docs/17 rows 422/429)', () => {
-  /** Kael (npc, WITH a cover) and Ash Gate (location) are already detailed here. */
-  function existing(module: Module): AnyArtifact[] {
-    const COVER = '00000000-0000-4000-8000-00000000c0de';
-    return (['Kael', 'Ash Gate'] as const).map((name) =>
-      createArtifact({
-        campaignId: CAMPAIGN.id,
-        moduleId: module.id,
-        kind: name === 'Kael' ? 'npc' : 'location',
-        name,
-        summary: 'Written by the old model.',
-        body: '',
-        ...(name === 'Kael' ? { coverImageId: COVER, imageIds: [COVER] } : {}),
-      }),
-    );
-  }
-
-  function renderWith(module: Module, artifacts: readonly AnyArtifact[]): void {
-    render(
-      <GenerationDialog
-        module={module}
-        campaign={CAMPAIGN}
-        artifacts={artifacts}
-        open
-        onOpenChange={vi.fn()}
-        blockedReason={null}
-      />,
-    );
-  }
-
-  const REPORT = {
-    generated: 0,
-    regenerated: 0,
-    imageJobs: 0,
-    mapJobs: 0,
-    portraitJobs: 0,
-    refused: null,
-    classified: [],
-    stopped: false,
-    notes: [],
-  };
-
-  it('is OFF by default: existing work is not counted and Generate asks nothing', async () => {
-    const user = userEvent.setup();
-    const module = moduleFixture();
-    const artifacts = existing(module);
-    renderWith(module, artifacts);
-
-    for (const lane of ['details', 'images', 'battlemaps', 'mobPortraits'] as const) {
-      expect(screen.getByTestId(`generation-overwrite-${lane}`).getAttribute('aria-checked')).toBe(
-        'false',
-      );
-    }
-    expect(screen.queryByTestId('generation-scope-overwrite')).toBeNull();
-    // Three names still need their detail (Mira, Old Keep, High Hall).
-    expect(screen.getByTestId('generation-scope-count').textContent).toContain('3 jobs');
-
-    runGenerationSelection.mockResolvedValue({
-      selection: selectGenerationTargets({
-        module,
-        artifacts,
-        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
-        imageKinds: [],
-        levelRange: { min: 1, max: 3 },
-        encounterExtras: { battlemaps: false, mobPortraits: false },
-      }),
-      ...REPORT,
-    });
-    await user.click(screen.getByTestId('generation-run'));
-    await waitFor(() => {
-      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
-    expect(runGenerationSelection.mock.calls[0]?.[0].overwrite).toEqual(NO_OVERWRITE_LANES);
-  });
-
-  it('ticked with NOTHING to replace: the scope says so and Generate still asks nothing', async () => {
-    const user = userEvent.setup();
-    const module = moduleFixture();
-    renderWith(module, ARTIFACTS);
-
-    await user.click(screen.getByTestId('generation-overwrite-details'));
-    expect(screen.getByTestId('generation-scope-overwrite').textContent).toBe(
-      'Overwrite (details): nothing of that exists yet — nothing is replaced.',
-    );
-    runGenerationSelection.mockResolvedValue({
-      selection: selectGenerationTargets({
-        module,
-        artifacts: ARTIFACTS,
-        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
-        imageKinds: [],
-        levelRange: { min: 1, max: 3 },
-        encounterExtras: { battlemaps: false, mobPortraits: false },
-        overwrite: { ...NO_OVERWRITE_LANES, details: true },
-      }),
-      ...REPORT,
-    });
-    await user.click(screen.getByTestId('generation-run'));
-    await waitFor(() => {
-      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
-  });
-
-  it('ticked with existing work: ONE confirmation naming the per-kind counts; Cancel runs nothing, Confirm runs the overwrite', async () => {
-    const user = userEvent.setup();
-    const module = moduleFixture();
-    const artifacts = existing(module);
-    renderWith(module, artifacts);
-
-    await user.click(screen.getByTestId('generation-overwrite-details'));
-    // The printed count is still the seam's own: 3 missing + 2 replaced.
-    expect(screen.getByTestId('generation-scope-count').textContent).toContain(
-      '5 jobs — 5 details',
-    );
-    expect(screen.getByTestId('generation-scope-overwrite').textContent).toBe(
-      'Overwrite (details): 2 details already exist and will be replaced.',
-    );
-
-    await user.click(screen.getByTestId('generation-run'));
-    // Nothing ran: the question is open, and it names what is replaced.
-    expect(runGenerationSelection).not.toHaveBeenCalled();
-    const confirm = screen.getByTestId('generation-wide-confirm');
-    expect(confirm.textContent).toContain('Replace existing work and start 5 generation jobs?');
-    expect(screen.getByTestId('generation-overwrite-counts').textContent).toBe(
-      'Overwrite replaces 2 details.',
-    );
-    expect(confirm.textContent).toContain('previous text stays restorable');
-    expect(confirm.textContent).not.toContain('nothing already generated is replaced');
-
-    await user.click(screen.getByTestId('generation-wide-confirm-cancel'));
-    await waitFor(() => {
-      expect(screen.queryByTestId('generation-wide-confirm')).toBeNull();
-    });
-    expect(runGenerationSelection).not.toHaveBeenCalled();
-
-    runGenerationSelection.mockResolvedValue({
-      selection: selectGenerationTargets({
-        module,
-        artifacts,
-        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
-        imageKinds: [],
-        levelRange: { min: 1, max: 3 },
-        encounterExtras: { battlemaps: false, mobPortraits: false },
-        overwrite: { ...NO_OVERWRITE_LANES, details: true },
-      }),
-      ...REPORT,
-    });
-    await user.click(screen.getByTestId('generation-run'));
-    await user.click(screen.getByTestId('generation-wide-confirm-run'));
-    await waitFor(() => {
-      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
-    });
-    expect(runGenerationSelection.mock.calls[0]?.[0].overwrite).toEqual({
-      ...NO_OVERWRITE_LANES,
-      details: true,
-    });
-  });
-
-  it('an existing encounter is regenerated IN FULL: the confirmation says its battlemap is redrawn, and no map job is counted (docs/17 row 423)', async () => {
-    const user = userEvent.setup();
-    const base = moduleFixture();
-    // The harbor plus one levelled encounter the module links.
-    const module: Module = {
-      ...base,
-      entityKinds: [
-        ...base.entityKinds,
-        { name: 'Ash Fight', kind: 'encounter', absorbed: [], levelHint: 3 },
-      ],
-      parts: base.parts.map((part, index) =>
-        index === 0 ? { ...part, markdown: `${part.markdown} [[Ash Fight]]` } : part,
-      ),
-    };
-    const MAP = '00000000-0000-4000-8000-0000000000aa';
-    const blank = createArtifact({
-      campaignId: CAMPAIGN.id,
-      moduleId: module.id,
-      kind: 'encounter',
-      name: 'Ash Fight',
-      summary: 'Goblins at the gate.',
-      body: '',
-    });
-    if (blank.kind !== 'encounter') throw new Error('fixture: not an encounter');
-    // MAPPED — so without row 423 the overwrite would ALSO count a map redraw.
-    const encounter: AnyArtifact = {
-      ...blank,
-      imageIds: [MAP],
-      data: { ...blank.data, layout: adoptionArenaLayout('4:3'), mapImageId: MAP },
-    };
-    const artifacts = [...existing(module), encounter];
-    renderWith(module, artifacts);
-
-    await user.click(screen.getByTestId('generation-battlemaps'));
-    await user.click(screen.getByTestId('generation-overwrite-details'));
-    const selection = selectGenerationTargets({
-      module,
-      artifacts,
-      kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
-      imageKinds: [],
-      levelRange: { min: 1, max: 3 },
-      encounterExtras: { battlemaps: true, mobPortraits: false },
-      overwrite: { ...NO_OVERWRITE_LANES, details: true },
-    });
-    // The printed plan IS the run's plan: 3 missing + 3 regenerated details,
-    // and NO battlemap job (the regeneration draws it).
-    expect(selection.totalCount).toBe(6);
-    expect(screen.getByTestId('generation-scope-count').textContent).toBe(
-      '6 jobs — 6 details, 0 images, 0 battlemaps, 0 mob portraits',
-    );
-
-    await user.click(screen.getByTestId('generation-run'));
-    const confirm = screen.getByTestId('generation-wide-confirm');
-    expect(confirm.textContent).toContain('Replace existing work and start 6 generation jobs?');
-    expect(screen.getByTestId('generation-overwrite-counts').textContent).toBe(
-      'Overwrite replaces 3 details.',
-    );
-    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
-      'Regenerating an encounter redraws its battlemap',
-    );
-    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
-      '1 encounter is regenerated completely',
-    );
-    expect(screen.getByTestId('generation-overwrite-encounters').textContent).toContain(
-      'the name is kept',
-    );
-    expect(screen.getByTestId('generation-wide-confirm-run').textContent).toBe('Generate 6 jobs');
-  });
-
-  it('the IMAGES lane alone is a complete answer — details untouched and Generate NOT grey (the owner’s report)', async () => {
-    const user = userEvent.setup();
-    const module = moduleFixture();
-    // Kael carries a cover; Ash Gate does not.
-    const artifacts = existing(module);
-    renderWith(module, artifacts);
-
-    // The owner's exact situation: the default Kinds (all six), NO image kind
-    // preferred in "Also generate an image for", and he only wants images redone.
-    await user.click(screen.getByTestId('generation-overwrite-images'));
-
-    // Only the existing cover is replaced — not one detail is touched.
-    expect(screen.getByTestId('generation-scope-overwrite').textContent).toBe(
-      'Overwrite (images): 1 image already exists and will be replaced.',
-    );
-    // 3 missing details + 1 replaced cover: the run is NOT empty.
-    expect(screen.getByTestId('generation-scope-count').textContent).toContain('4 jobs');
-    // THE DEFECT: this button used to be grey until a kind was ticked.
-    expect(screen.getByTestId('generation-run')).not.toBeDisabled();
-
-    // Replacing still asks first, and the question names the cover.
-    await user.click(screen.getByTestId('generation-run'));
-    const confirm = screen.getByTestId('generation-wide-confirm');
-    expect(confirm.textContent).toContain('Replace existing work and start 4 generation jobs?');
-    expect(screen.getByTestId('generation-overwrite-counts').textContent).toBe(
-      'Overwrite replaces 1 image.',
-    );
   });
 });

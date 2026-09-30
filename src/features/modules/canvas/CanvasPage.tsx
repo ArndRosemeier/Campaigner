@@ -92,6 +92,7 @@ import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { ModuleRestockButton } from '@/features/modules/module-restock-button';
 import { GenerationButton } from '@/features/modules/generation-dialog';
+import { ChangeButton } from '@/features/modules/change-dialog';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
@@ -1833,6 +1834,17 @@ export function CanvasPage(): JSX.Element {
             itself is gone.
           */}
           <GenerationButton
+            module={currentModule}
+            campaign={currentCampaign}
+            artifacts={pool}
+            blockedReason={busy ? MODULE_GENERATING_REASON : null}
+          />
+          {/*
+            The SIBLING change dialog (docs/17 row 431): Generate only creates
+            what is missing, so redoing what already exists has its own control
+            beside it — one button per intent, never a switch inside the other.
+          */}
+          <ChangeButton
             module={currentModule}
             campaign={currentCampaign}
             artifacts={pool}

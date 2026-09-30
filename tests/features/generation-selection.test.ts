@@ -13,10 +13,10 @@ import {
 import {
   GENERATION_KINDS,
   generationKindLabel,
-  NO_OVERWRITE_LANES,
+  NO_CHANGE_SCOPE,
   selectGenerationTargets,
   selectLevelNames,
-  type GenerationOverwriteScope,
+  type GenerationChangeScope,
 } from '@/features/modules/generation-selection';
 import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
 
@@ -418,13 +418,13 @@ describe('the dialog vocabulary', () => {
  * already exists and reports it separately (the dialog names it before anything
  * runs); with it off, nothing changes.
  */
-describe('the overwrite lanes (docs/17 rows 422/429)', () => {
+describe('the change scope (docs/17 rows 422/431)', () => {
   const COVER = '00000000-0000-4000-8000-00000000c0de';
   const MAP = '00000000-0000-4000-8000-0000000000aa';
-  /** Every lane on — row 422's single switch, now expressed as four choices. */
-  const ALL_LANES: GenerationOverwriteScope = {
-    details: true,
-    images: true,
+  /** Every text and every image redone, plus the two encounter extras. */
+  const ALL_CHANGE: GenerationChangeScope = {
+    texts: [...GENERATION_KINDS],
+    images: [...GENERATION_KINDS],
     battlemaps: true,
     mobPortraits: true,
   };
@@ -492,7 +492,7 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
 
   /** Ids are minted per call, so every comparison reads ONE world. */
   const fixed = world();
-  const pick = (overwrite?: GenerationOverwriteScope) => {
+  const pick = (change?: GenerationChangeScope) => {
     const { module, artifacts } = fixed;
     return selectGenerationTargets({
       module,
@@ -501,13 +501,13 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
       imageKinds: ['npc', 'location'],
       levelRange: { min: 1, max: 3 },
       encounterExtras: { battlemaps: true, mobPortraits: true },
-      ...(overwrite === undefined ? {} : { overwrite }),
+      ...(change === undefined ? {} : { change }),
     });
   };
 
-  it('OFF (absent, or every lane false) leaves the selection exactly as it was and replaces nothing', () => {
+  it('OFF (absent, or an empty scope) leaves the selection exactly as it was and changes nothing', () => {
     const absent = pick();
-    const off = pick(NO_OVERWRITE_LANES);
+    const off = pick(NO_CHANGE_SCOPE);
     expect(off).toEqual(absent);
     expect(off.overwrites).toEqual({ details: [], images: [], maps: [], mobPortraits: [], kept: [] });
     // The additive run still sees only the missing work.
@@ -517,18 +517,18 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
   });
 
   it('ON covers every selected name that already exists, reported per kind of work', () => {
-    const off = pick(NO_OVERWRITE_LANES);
-    const on = pick(ALL_LANES);
+    const off = pick(NO_CHANGE_SCOPE);
+    const on = pick(ALL_CHANGE);
     const { artifacts } = fixed;
     const idOf = (name: string) => artifacts.find((artifact) => artifact.name === name)?.id;
 
-    // Details: this module's own detailed rows, each with the row it regenerates.
+    // Texts: this module's own written rows, each with the row it rewrites.
     expect(on.overwrites.details.map((target) => [target.name, target.artifactId])).toEqual([
       ['Kael', idOf('Kael')],
       ['Ash Gate', idOf('Ash Gate')],
       ['Ash Fight', idOf('Ash Fight')],
     ]);
-    // A row this module only LINKS to is named, never silently regenerated.
+    // A row this module only LINKS to is named, never silently rewritten.
     expect(on.overwrites.kept).toEqual([
       {
         name: 'Mira',
@@ -540,20 +540,18 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
     // ordinary additive image work).
     expect(on.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
     expect(on.images.map((target) => target.name)).toEqual(off.images.map((target) => target.name));
-    // The mapped encounter's DETAIL is regenerated, and that regeneration
-    // redraws its map (docs/17 row 423) — so it is NOT also a map job. Its
-    // portraits are a replace-all, NOT also counted as a fill (one encounter,
-    // one portrait job).
+    // The mapped encounter's TEXT is redone, and that regeneration redraws its
+    // map (docs/17 row 423) — so it is NOT also a map job. Its portraits are a
+    // replace-all, NOT also counted as a fill (one encounter, one portrait job).
     expect(on.overwrites.maps).toEqual([]);
     expect(on.overwrites.mobPortraits.map((target) => target.artifactId)).toEqual([idOf('Ash Fight')]);
     expect(on.mobPortraits).toEqual([]);
-    // The additive work is untouched, and the announced count is TRUE: the old
-    // count, minus the fill the replace-all absorbed, plus every overwrite job.
+    // The additive work is untouched, and the announced count is TRUE.
     expect(on.detail).toEqual(off.detail);
     expect(on.totalCount).toBe(off.totalCount - 1 + 3 + 1 + 0 + 1);
   });
 
-  it('an encounter whose DETAIL is overwritten is in NEITHER map set — mapped or not, its regeneration draws the map (docs/17 row 423)', () => {
+  it('an encounter whose TEXT is redone is in NEITHER map set — mapped or not, its regeneration draws the map (docs/17 row 423)', () => {
     const { module, artifacts } = fixed;
     // The same world with the encounter UNMAPPED: additively it needs a map.
     const unmapped = artifacts.map((artifact) =>
@@ -561,7 +559,7 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
         ? { ...artifact, imageIds: [], data: { ...artifact.data, layout: null, mapImageId: null } }
         : artifact,
     );
-    const select = (overwrite: GenerationOverwriteScope) =>
+    const select = (change: GenerationChangeScope) =>
       selectGenerationTargets({
         module,
         artifacts: unmapped,
@@ -569,20 +567,19 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
         imageKinds: [],
         levelRange: { min: 1, max: 3 },
         encounterExtras: { battlemaps: true, mobPortraits: false },
-        overwrite,
+        change,
       });
-    const off = select(NO_OVERWRITE_LANES);
-    // A FOCUSED scope: this pin is about the detail→map exclusion, so only the
-    // lanes it is about are on (the images/portrait lanes have their own pins).
-    const on = select({ ...NO_OVERWRITE_LANES, details: true, battlemaps: true });
+    const off = select(NO_CHANGE_SCOPE);
+    // A FOCUSED scope: this pin is about the text→map exclusion, so only the
+    // halves it is about are on (the image/portrait halves have their own pins).
+    const on = select({ ...NO_CHANGE_SCOPE, texts: ['npc', 'location', 'encounter'], battlemaps: true });
     const encounterId = unmapped.find((artifact) => artifact.kind === 'encounter')?.id;
     expect(off.maps.map((target) => target.artifactId)).toEqual([encounterId]);
     expect(on.overwrites.details.map((target) => target.artifactId)).toContain(encounterId);
     expect(on.maps).toEqual([]);
     expect(on.overwrites.maps).toEqual([]);
-    // The count drops the map job and adds the three detail regenerations.
     expect(on.totalCount).toBe(off.totalCount - 1 + 3);
-    // A HELD encounter (no level: not regenerated) keeps its map redraw.
+    // A HELD encounter (no level: not redone) keeps its map redraw.
     const held: Module = {
       ...module,
       entityKinds: module.entityKinds.map((entry) =>
@@ -596,53 +593,75 @@ describe('the overwrite lanes (docs/17 rows 422/429)', () => {
       imageKinds: [],
       levelRange: { min: 1, max: 3 },
       encounterExtras: { battlemaps: true, mobPortraits: false },
-      overwrite: { ...NO_OVERWRITE_LANES, details: true, battlemaps: true },
+      change: { ...NO_CHANGE_SCOPE, texts: ['npc', 'location', 'encounter'], battlemaps: true },
     });
     expect(heldOn.overwrites.details.map((target) => target.name)).not.toContain('Ash Fight');
     expect(heldOn.overwrites.maps.map((target) => target.name)).toEqual(['Ash Fight']);
   });
 
-  it('the IMAGES lane alone replaces every existing cover and touches nothing else (the owner’s case)', () => {
-    const off = pick(NO_OVERWRITE_LANES);
-    const imagesOnly = pick({ ...NO_OVERWRITE_LANES, images: true });
-    // Nothing but the covers: no detail is regenerated, nothing is held back,
-    // no map and no portrait is replaced.
-    expect(imagesOnly.overwrites.details).toEqual([]);
-    expect(imagesOnly.overwrites.kept).toEqual([]);
-    expect(imagesOnly.overwrites.maps).toEqual([]);
-    expect(imagesOnly.overwrites.mobPortraits).toEqual([]);
-    expect(imagesOnly.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
-    // AND THE RUN IS NOT EMPTY — the dialog's Generate greys on `totalCount === 0`,
-    // which is exactly the grey button the owner reported ("button is grey until i
-    // select a kind"). One replaced cover is a complete answer.
-    expect(imagesOnly.totalCount).toBe(off.totalCount + 1);
+  it('the IMAGES half alone is a complete answer with NO generation kind ticked (the owner’s case)', () => {
+    const { module, artifacts } = fixed;
+    // `kinds: []` — exactly what the generation dialog's Kinds boxes are when the
+    // owner only wants images redone. This is the case that used to answer
+    // "Nothing selected — tick a kind or widen the level range."
+    const selection = selectGenerationTargets({
+      module,
+      artifacts,
+      kinds: [],
+      imageKinds: [],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
+      change: { ...NO_CHANGE_SCOPE, images: [...GENERATION_KINDS] },
+    });
+    expect(selection.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
+    expect(selection.overwrites.details).toEqual([]);
+    expect(selection.overwrites.maps).toEqual([]);
+    expect(selection.overwrites.mobPortraits).toEqual([]);
+    // A real, countable run — never the grey button.
+    expect(selection.totalCount).toBe(1);
+    // AND NOTHING ADDITIVE LEAKED IN from the empty generation half.
+    expect(selection.detail).toEqual([]);
+    expect(selection.images).toEqual([]);
+    expect(selection.maps).toEqual([]);
+    expect(selection.mobPortraits).toEqual([]);
   });
 
-  it('the lanes never read the additive controls — not imageKinds, not the extras (docs/17 row 429)', () => {
+  it('the change scope is PER KIND and never reads the additive controls (docs/17 row 431)', () => {
     const { module, artifacts } = fixed;
-    const lanesOnly = (overwrite: GenerationOverwriteScope) =>
+    const scope = (change: GenerationChangeScope) =>
       selectGenerationTargets({
         module,
         artifacts,
-        kinds: ['npc', 'location', 'encounter'],
+        kinds: [],
         // The additive preference is EMPTY and both extras are OFF…
         imageKinds: [],
         levelRange: { min: 1, max: 3 },
         encounterExtras: { battlemaps: false, mobPortraits: false },
-        overwrite,
+        change,
       });
-    // …and every lane still replaces its own existing work: the images lane
-    // reads the selected kinds, the map/portrait lanes read their own flags.
-    const all = lanesOnly(ALL_LANES);
-    expect(all.images).toEqual([]);
-    expect(all.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
-    expect(all.overwrites.details).toHaveLength(3);
-    expect(all.overwrites.mobPortraits.map((target) => target.name)).toEqual(['Ash Fight']);
-    // The mirror: an OFF lane replaces nothing of its kind, whatever is ticked above.
-    const imagesOnly = lanesOnly({ ...NO_OVERWRITE_LANES, images: true });
-    expect(imagesOnly.overwrites.details).toEqual([]);
-    expect(imagesOnly.overwrites.maps).toEqual([]);
-    expect(imagesOnly.overwrites.mobPortraits).toEqual([]);
-    expect(imagesOnly.overwrites.images).toHaveLength(1);
+    // …and each half redos exactly its own kind. Images for npc only:
+    const npcImages = scope({ ...NO_CHANGE_SCOPE, images: ['npc'] });
+    expect(npcImages.overwrites.images.map((target) => target.name)).toEqual(['Kael']);
+    expect(npcImages.overwrites.details).toEqual([]);
+    expect(npcImages.overwrites.maps).toEqual([]);
+    expect(npcImages.overwrites.mobPortraits).toEqual([]);
+    // Texts for npc only:
+    const npcTexts = scope({ ...NO_CHANGE_SCOPE, texts: ['npc'] });
+    expect(npcTexts.overwrites.details.map((target) => target.name)).toEqual(['Kael']);
+    expect(npcTexts.overwrites.images).toEqual([]);
+    // The encounter extras are their own flags, and imply no texts or images:
+    const extras = scope({ ...NO_CHANGE_SCOPE, battlemaps: true, mobPortraits: true });
+    expect(extras.overwrites.maps.map((target) => target.name)).toEqual(['Ash Fight']);
+    expect(extras.overwrites.mobPortraits.map((target) => target.name)).toEqual(['Ash Fight']);
+    expect(extras.overwrites.details).toEqual([]);
+    expect(extras.overwrites.images).toEqual([]);
+  });
+
+  it('an OFF half changes nothing of its kind, whatever the additive controls ask for', () => {
+    const off = pick(NO_CHANGE_SCOPE);
+    expect(off.overwrites.images).toEqual([]);
+    expect(off.overwrites.maps).toEqual([]);
+    expect(off.overwrites.mobPortraits).toEqual([]);
+    expect(off.overwrites.details).toEqual([]);
   });
 });

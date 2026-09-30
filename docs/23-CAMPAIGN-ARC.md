@@ -315,19 +315,25 @@ missing artifact, so a name whose detail failed is reported by the batch and nev
 `imageJobs` / `mapJobs` / `portraitJobs` are those actual counts. A ticked kind that enqueued NOTHING is
 NAMED in the run's summary with its reason.
 
-**THE OVERWRITE HAS FOUR INDEPENDENT LANES (docs/17 rows 422/430).** The seam's `overwrite` is a
-`GenerationOverwriteScope` — `{ details, images, battlemaps, mobPortraits }`, every lane off by default and
-never remembered — and the dialog renders it as four checkboxes under "Existing work — overwrite, off
-unless ticked". Each lane adds ONLY its own existing work to `overwrites`, so ticking Images alone
-replaces every existing cover and regenerates not one detail. **A lane reads the overwrite's OWN scope,
-never an additive control:** the images lane replaces every existing cover of the SELECTED KINDS
-(`input.kinds` — NOT the additive `imageKinds` preference, which answers "should this kind GET an image",
-a different question from "replace the image that is there"), and the map/portrait lanes read their own
-flags rather than the Encounter-extras boxes. That is the owner's report fixed, verbatim: *"if i just want
-to overwrite all the images i can not do that, button is grey until i select a kind. Which would be wrong
-since i only want to redo images."* Before the lanes, unticking Kinds to spare the details emptied the
-image lane too (it was `kinds ∩ imageKinds`), so nothing was selected and Generate stayed grey — and
-ticking a kind to un-grey it dragged the detail regeneration back in.
+**CHANGING EXISTING WORK IS ITS OWN DIALOG (docs/17 rows 430/431).** Generate only CREATES what is
+missing; a sibling `Change generations…` button opens a sibling dialog
+(`features/modules/change-dialog.tsx`) that redoes what already exists. Its scope is the seam's `change`
+half — `GenerationChangeScope` (`{ texts, images, battlemaps, mobPortraits }`, per-kind for the first
+two) — and it is a scope of its OWN: the change kinds join the level-scoped name selection even when the
+generation `kinds` is empty, so "redo every image" needs no generation kind ticked at all. That is the
+owner's report fixed, verbatim: *"if i just want to overwrite all the images i can not do that, button is
+grey until i select a kind. Which would be wrong since i only want to redo images."* — and then his
+decision: *"Lets do a sibling dialog just for changes. Keep all the change work out of the generation
+dialog and leave it to do just that, generate things that are not there. Add another dialog behind a
+'Change generations'-Button that works like this: For every kind, 2 checkboxes. Texts & images. For
+encounters a bit more (the standard extras for encounters)."* So the Change dialog renders Texts and
+Images for EACH of the six kinds, plus Battlemaps and Mob portraits on the encounter row, and nothing
+else: no Kinds, no image preference, no level range (its scope is the whole document, premise included,
+so a premise-only entity is redoable rather than silently skipped). Each half reads its OWN ticks —
+never the additive `imageKinds` preference, never the `encounterExtras` boxes — because "redo the image
+that is there" is a different question from "make an image that is missing". It runs the SAME
+`runGenerationSelection` on the SAME seam with an EMPTY generation half, so it can never create
+anything, and it asks ONE confirmation before it replaces.
 
 **THERE IS NO GLOBAL IMAGE SWITCH (docs/17 row 406).** `Settings.imagesEnabled` is deleted — asking for
 an image IS the intent, and a switch that was off by default is what made the owner's "generate

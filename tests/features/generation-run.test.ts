@@ -12,6 +12,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { patchModule, saveModule } from '@/db/moduleRepo';
 import {
   createModule,
+  ENTITY_KINDS,
   libraryCreatureKey,
   modulePartSchema,
   moduleSpineSchema,
@@ -22,7 +23,7 @@ import {
 } from '@/domain';
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
 import { generationRunActive, runGenerationSelection } from '@/features/modules/generation-run';
-import type { GenerationOverwriteScope } from '@/features/modules/generation-selection';
+import type { GenerationChangeScope } from '@/features/modules/generation-selection';
 import { useProgressStore } from '@/lib/progress';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
 import { adoptionArenaLayout } from '../helpers/battle-map-fixtures';
@@ -216,10 +217,10 @@ function makeBatchWriteArtifacts(campaignId: string, moduleId: string): void {
   );
 }
 
-/** Every overwrite lane on — docs/17 row 422's single switch, now four choices. */
-const ALL_LANES: GenerationOverwriteScope = {
-  details: true,
-  images: true,
+/** Every text and image redone, plus the encounter extras (docs/17 row 431). */
+const ALL_CHANGE: GenerationChangeScope = {
+  texts: [...ENTITY_KINDS],
+  images: [...ENTITY_KINDS],
   battlemaps: true,
   mobPortraits: true,
 };
@@ -232,7 +233,7 @@ async function run(
     imageKinds?: EntityKind[];
     battlemaps?: boolean;
     mobPortraits?: boolean;
-    overwrite?: GenerationOverwriteScope;
+    change?: GenerationChangeScope;
   },
 ) {
   return runGenerationSelection({
@@ -248,7 +249,7 @@ async function run(
       battlemaps: options.battlemaps ?? false,
       mobPortraits: options.mobPortraits ?? false,
     },
-    ...(options.overwrite === undefined ? {} : { overwrite: options.overwrite }),
+    ...(options.change === undefined ? {} : { change: options.change }),
   });
 }
 
@@ -535,7 +536,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       },
     );
 
-    const report = await run(campaign, module, { kinds: ['npc'], overwrite: ALL_LANES });
+    const report = await run(campaign, module, { kinds: ['npc'], change: ALL_CHANGE });
 
     expect(runEntityBatchMock).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'npc', targets: [{ name: 'Kael', artifactId: kael.id }] }),
@@ -638,7 +639,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       imageKinds: ['npc'],
       battlemaps: true,
       mobPortraits: true,
-      overwrite: ALL_LANES,
+      change: ALL_CHANGE,
     });
 
     // The encounter is NOT an entity-batch target: it is regenerated through the
@@ -695,7 +696,7 @@ describe('the overwrite run regenerates in place and replaces (docs/17 row 422)'
       return Promise.reject(new Error('Repopulate ended cancelled'));
     });
 
-    const report = await run(campaign, module, { kinds: ['encounter'], overwrite: ALL_LANES });
+    const report = await run(campaign, module, { kinds: ['encounter'], change: ALL_CHANGE });
 
     expect(changeArtifactMock).toHaveBeenCalledTimes(1);
     expect(report.stopped).toBe(true);
