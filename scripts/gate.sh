@@ -149,11 +149,6 @@ fi
 SOFT_FALLBACK_MB="${GATE_PARALLEL_FALLBACK_MB:-$((RSS_CAP_MB * 9 / 10))}"
 MAX_VOID_RETRIES="${GATE_MAX_VOID_RETRIES:-1}"
 
-command -v setsid >/dev/null 2>&1 || {
-  echo "!! GATE: setsid is required (per-chunk process groups)" >&2
-  exit 2
-}
-
 self=$$
 foreign() { pgrep -af 'vites[t]|playwrigh[t]' 2>/dev/null | grep -v 'bash -c' | grep -v " $self " | grep -v "^$self "; }
 
@@ -410,6 +405,17 @@ print_plan
 # takes — backwards, since the compile tier is what a writer needs most. It
 # reads nothing the lock protects, so contention is not a concern for it.
 if [ "$COMPILE_ONLY" != "1" ]; then
+  # The SUITE needs per-chunk process groups (setsid) and the foreign-suite scan
+  # (pgrep); the plan print and the compile tier need neither, so the check sits
+  # HERE, where the suite starts (docs/17 row 426) — a host without them (Git
+  # Bash on Windows) can still print the plan and run typecheck + lint, and a
+  # full run there still refuses loudly instead of running unbounded.
+  for tool in setsid pgrep; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      echo "!! GATE: $tool is required for the suite (per-chunk process groups / the foreign-suite scan) — run the full gate on the Linux host" >&2
+      exit 2
+    }
+  done
   if [ -n "$(foreign)" ]; then
     echo "WAITING: another suite is already running (ours or the peer project's):"
     foreign | head -3
