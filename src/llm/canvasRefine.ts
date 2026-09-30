@@ -15,6 +15,7 @@ import {
 import { parseJsonReply } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
+import { WIKI_TOKEN_RULES } from '@/llm/wikiLinkRules';
 
 /**
  * Canvas refine contract (08-MODULE-DESIGNER §Module canvas): ONE loud
@@ -227,8 +228,6 @@ function decodeJsonStringPrefix(text: string, start: number): string {
   return out;
 }
 
-const WIKI_TOKEN_RULES =
-  '- Wiki-links are [[Name]] tokens (names, never IDs). Keep every token\'s EXACT canonical spelling when the instruction does not rename the entity; never inflect inside the token — write [[Halmund]]\'s tower, not [[Halmunds]] Haus; write [[Name|display]] when the surface text must differ from the canonical name; use [[Name|display]] for roles/titles ([[Halmund|the guard Halmund]]). When the instruction renames or introduces entities, update every affected token inside the replacement consistently. The same rules apply in any language.';
 
 /**
  * The SHARED text-transform CORE (docs/17 rows 353/356): explicit text in, one

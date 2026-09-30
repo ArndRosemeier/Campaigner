@@ -25,6 +25,7 @@ import {
   registerCanvasAbort,
   releaseModuleGeneration,
 } from '@/llm/canvasBusy';
+import { WIKI_LINK_WHAT_TO_LINK, WIKI_TOKEN_RULES } from '@/llm/wikiLinkRules';
 
 /**
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): LLM
@@ -1535,8 +1536,6 @@ export function resolveCanvasEditAcrossParts(
 
 // --- context contract -------------------------------------------------------------
 
-const WIKI_TOKEN_RULES =
-  '- Wiki-links are [[Name]] tokens (names, never IDs). Keep every token\'s EXACT canonical spelling when the instruction does not rename the entity; never inflect inside the token — write [[Halmund]]\'s tower, not [[Halmunds]] Haus; write [[Name|display]] when the surface text must differ from the canonical name. The same rules apply in any language.';
 
 /**
  * WHICH canvas chat surface a turn belongs to (docs/17 row 362). ONE identity
@@ -1662,6 +1661,7 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- Ask for a review when the owner wants a passage CRITIQUED (its problems found and named); write <edit> when you already know what to change. The review\'s findings come back in the <change-results> block, and the edit it produces is applied and undoable from the Versions menu.',
     '- When the critique finds NOTHING, nothing is written and the results block says NOTHING TO FIX — that is a successful review, not a failure.',
     '- Never write the literal strings <edit>, <request>, <change>, <replace_level>, <append_level>, </edit>, </request>, </change>, </replace_level> or </append_level> in your prose — they are command blocks only.',
+    WIKI_LINK_WHAT_TO_LINK,
     WIKI_TOKEN_RULES,
     'Match the language of the document. Prose between commands is shown to the user — keep it brief.',
   ].join('\n');

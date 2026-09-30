@@ -5,6 +5,7 @@ import {
   type ModulePromptStyle,
   type PromptStyle,
 } from '@/domain/promptStyle';
+import { WIKI_LINK_WHAT_TO_LINK } from '@/llm/wikiLinkRules';
 
 /**
  * The CONTRACT layer and the built-in styles (owner-directed, docs/17 rows 86
@@ -187,7 +188,7 @@ const PARTS_GM_ADDRESS =
  * entity.
  */
 const PARTS_WIKI_LINKS = [
-  '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
+  WIKI_LINK_WHAT_TO_LINK,
   "- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.",
 ].join('\n');
 
